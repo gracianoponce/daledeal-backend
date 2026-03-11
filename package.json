@@ -1,0 +1,23 @@
+{
+  "name": "dale-deal-backend",
+  "version": "1.0.0",
+  "description": "Backend API para el marketplace Dale Deal",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "db:schema": "psql $DATABASE_URL -f db/schema.sql",
+    "db:seed": "psql $DATABASE_URL -f db/seed.sql"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
