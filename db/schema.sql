@@ -94,3 +94,65 @@ CREATE INDEX idx_products_status     ON products(status);
 CREATE INDEX idx_services_provider   ON services(provider_id);
 CREATE INDEX idx_services_category   ON services(category_id);
 CREATE INDEX idx_services_status     ON services(status);
+
+-- ============================================================
+-- TABLA: favorites
+-- ============================================================
+CREATE TABLE favorites (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_type  VARCHAR(10) NOT NULL CHECK (item_type IN ('product', 'service')),
+  item_id    INTEGER NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_id, item_type, item_id)
+);
+
+CREATE INDEX idx_favorites_user      ON favorites(user_id);
+CREATE INDEX idx_favorites_item      ON favorites(item_type, item_id);
+
+-- ============================================================
+-- TABLA: orders
+-- ============================================================
+CREATE TABLE orders (
+  id               SERIAL PRIMARY KEY,
+  buyer_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  seller_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  product_id       INTEGER REFERENCES products(id) ON DELETE SET NULL,
+  quantity         INTEGER NOT NULL DEFAULT 1,
+  unit_price       DECIMAL(12,2) NOT NULL,
+  total_price      DECIMAL(12,2) NOT NULL,
+  currency         VARCHAR(3) DEFAULT 'ARS',
+  status           VARCHAR(20) DEFAULT 'pending'
+                   CHECK (status IN ('pending','confirmed','shipped','delivered','cancelled')),
+  payment_method   VARCHAR(30) DEFAULT 'pending',
+  payment_status   VARCHAR(20) DEFAULT 'pending'
+                   CHECK (payment_status IN ('pending','paid','refunded','failed')),
+  shipping_address TEXT,
+  notes            TEXT,
+  created_at       TIMESTAMP DEFAULT NOW(),
+  updated_at       TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_orders_buyer    ON orders(buyer_id);
+CREATE INDEX idx_orders_seller   ON orders(seller_id);
+CREATE INDEX idx_orders_product  ON orders(product_id);
+CREATE INDEX idx_orders_status   ON orders(status);
+
+-- ============================================================
+-- TABLA: reviews
+-- ============================================================
+CREATE TABLE reviews (
+  id           SERIAL PRIMARY KEY,
+  reviewer_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_type    VARCHAR(10) NOT NULL CHECK (item_type IN ('product', 'service')),
+  item_id      INTEGER NOT NULL,
+  rating       SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  title        VARCHAR(150),
+  body         TEXT,
+  created_at   TIMESTAMP DEFAULT NOW(),
+  updated_at   TIMESTAMP DEFAULT NOW(),
+  UNIQUE(reviewer_id, item_type, item_id)
+);
+
+CREATE INDEX idx_reviews_item      ON reviews(item_type, item_id);
+CREATE INDEX idx_reviews_reviewer  ON reviews(reviewer_id);

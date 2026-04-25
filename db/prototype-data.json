@@ -1,0 +1,448 @@
+{
+  "users": [
+    { "id": 1, "name": "Graciano Ponce", "email": "graciano@daledeal.com", "password_hash": "$2a$12$placeholder", "avatar_url": "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=face", "phone": "11-1234-5678", "location": "Buenos Aires, CABA", "role": "admin", "is_active": true },
+    { "id": 2, "name": "María González", "email": "maria@example.com", "password_hash": "$2a$12$placeholder", "avatar_url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop&crop=face", "phone": "11-9876-5432", "location": "Córdoba Capital", "role": "user", "is_active": true },
+    { "id": 3, "name": "Carlos Rodríguez", "email": "carlos@example.com", "password_hash": "$2a$12$placeholder", "avatar_url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face", "phone": "11-5555-4321", "location": "Rosario, Santa Fe", "role": "user", "is_active": true },
+    { "id": 4, "name": "Lucía Fernández", "email": "lucia@example.com", "password_hash": "$2a$12$placeholder", "avatar_url": "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=face", "phone": "11-7777-8888", "location": "Mendoza", "role": "user", "is_active": true },
+    { "id": 5, "name": "Diego Martínez", "email": "diego@example.com", "password_hash": "$2a$12$placeholder", "avatar_url": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=face", "phone": "11-3333-2222", "location": "Buenos Aires, GBA Norte", "role": "user", "is_active": true }
+  ],
+
+  "product_categories": [
+    { "id": 1, "name": "Electrónica", "slug": "electronica", "icon": "laptop" },
+    { "id": 2, "name": "Ropa y accesorios", "slug": "ropa-accesorios", "icon": "shirt" },
+    { "id": 3, "name": "Hogar y jardín", "slug": "hogar-jardin", "icon": "home" },
+    { "id": 4, "name": "Deportes", "slug": "deportes", "icon": "activity" },
+    { "id": 5, "name": "Juguetes", "slug": "juguetes", "icon": "star" },
+    { "id": 6, "name": "Vehículos", "slug": "vehiculos", "icon": "car" },
+    { "id": 7, "name": "Inmuebles", "slug": "inmuebles", "icon": "building" },
+    { "id": 8, "name": "Otros", "slug": "otros", "icon": "package" }
+  ],
+
+  "service_categories": [
+    { "id": 1, "name": "Plomería", "slug": "plomeria", "icon": "droplet" },
+    { "id": 2, "name": "Electricidad", "slug": "electricidad", "icon": "zap" },
+    { "id": 3, "name": "Gasista", "slug": "gasista", "icon": "flame" },
+    { "id": 4, "name": "Peluquería", "slug": "peluqueria", "icon": "scissors" },
+    { "id": 5, "name": "Limpieza", "slug": "limpieza", "icon": "wind" },
+    { "id": 6, "name": "Pintura", "slug": "pintura", "icon": "paintbrush" },
+    { "id": 7, "name": "Carpintería", "slug": "carpinteria", "icon": "hammer" },
+    { "id": 8, "name": "Mecánica", "slug": "mecanica", "icon": "settings" },
+    { "id": 9, "name": "Informática", "slug": "informatica", "icon": "monitor" },
+    { "id": 10, "name": "Otros servicios", "slug": "otros-servicios", "icon": "briefcase" }
+  ],
+
+  "products": [
+    {
+      "id": 1, "title": "iPhone 15 Pro Max 256GB Titanio Natural",
+      "description": "El iPhone 15 Pro Max con chip A17 Pro, cámara de 48MP con teleobjetivo 5x, pantalla Super Retina XDR de 6.7\" y diseño en titanio de grado aeroespacial. Incluye cargador USB-C. Libre de fábrica.",
+      "price": 1299999, "currency": "ARS", "stock": 15, "condition": "new",
+      "category_id": 1, "seller_id": 2,
+      "images": ["https://images.unsplash.com/photo-1592750475338-74b7b21085ab?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 2340,
+      "created_at": "2026-03-10T10:00:00Z"
+    },
+    {
+      "id": 2, "title": "Samsung Galaxy S24 Ultra 512GB",
+      "description": "El Galaxy S24 Ultra con Snapdragon 8 Gen 3, cámara de 200MP, S Pen integrado y pantalla Dynamic AMOLED 2X de 6.8\". Resistencia IP68. Garantía oficial Samsung Argentina.",
+      "price": 1159999, "currency": "ARS", "stock": 23, "condition": "new",
+      "category_id": 1, "seller_id": 3,
+      "images": ["https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1574944985070-8f3ebc6b79d2?w=600&h=600&fit=crop"],
+      "location": "Córdoba Capital", "status": "active", "views": 1890,
+      "created_at": "2026-03-12T14:30:00Z"
+    },
+    {
+      "id": 3, "title": "MacBook Pro 14\" M3 Pro 18GB RAM 512GB SSD",
+      "description": "MacBook Pro con chip M3 Pro, pantalla Liquid Retina XDR de 14.2\", 18GB de memoria unificada y SSD de 512GB. Batería de hasta 18 horas. Ideal para trabajo creativo y desarrollo.",
+      "price": 2450000, "currency": "ARS", "stock": 8, "condition": "new",
+      "category_id": 1, "seller_id": 1,
+      "images": ["https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1611186871525-2a1de4e7498f?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 3100,
+      "created_at": "2026-03-08T09:00:00Z"
+    },
+    {
+      "id": 4, "title": "Notebook Lenovo IdeaPad 5i Intel i7 16GB 512GB",
+      "description": "Notebook Lenovo IdeaPad 5i con procesador Intel Core i7 de 12va generación, 16GB RAM DDR5, SSD NVMe 512GB, pantalla Full HD 15.6\" IPS antireflex. Teclado retroiluminado.",
+      "price": 620000, "currency": "ARS", "stock": 12, "condition": "new",
+      "category_id": 1, "seller_id": 4,
+      "images": ["https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1525547719571-a2d4ac8945e2?w=600&h=600&fit=crop"],
+      "location": "Rosario, Santa Fe", "status": "active", "views": 980,
+      "created_at": "2026-03-15T11:00:00Z"
+    },
+    {
+      "id": 5, "title": "Smart TV Samsung 55\" QLED 4K 2025",
+      "description": "Televisor Samsung QLED 4K de 55\", tecnología Quantum Dot, HDR10+, Dolby Atmos, Smart TV con Tizen OS. 4 puertos HDMI 2.1, WiFi 6, Bluetooth 5.2. Con control remoto solar.",
+      "price": 489999, "currency": "ARS", "stock": 18, "condition": "new",
+      "category_id": 1, "seller_id": 5,
+      "images": ["https://images.unsplash.com/photo-1593359677879-a4bb92f4e3d1?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1584905066893-7d5c142ba4e1?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, GBA Norte", "status": "active", "views": 1456,
+      "created_at": "2026-03-14T15:00:00Z"
+    },
+    {
+      "id": 6, "title": "AirPods Pro 2da Generación con MagSafe",
+      "description": "AirPods Pro con cancelación activa de ruido, modo de transparencia adaptable, audio espacial personalizado, chip H2. Hasta 6 horas de escucha. Resistentes al agua IPX4.",
+      "price": 219999, "currency": "ARS", "stock": 35, "condition": "new",
+      "category_id": 1, "seller_id": 2,
+      "images": ["https://images.unsplash.com/photo-1600294037681-c80b4cb5b434?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1585386959984-a4155224a1ad?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 2100,
+      "created_at": "2026-03-11T16:00:00Z"
+    },
+    {
+      "id": 7, "title": "PlayStation 5 Slim + 2 Controles DualSense",
+      "description": "PlayStation 5 Slim con lector de disco, 1TB SSD, dos controles DualSense incluidos. Juego Spider-Man 2 de regalo. Garantía oficial Sony Argentina 1 año.",
+      "price": 699999, "currency": "ARS", "stock": 6, "condition": "new",
+      "category_id": 1, "seller_id": 3,
+      "images": ["https://images.unsplash.com/photo-1606813907291-d86efa9b94db?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1607853202273-797f1c22a38e?w=600&h=600&fit=crop"],
+      "location": "Córdoba Capital", "status": "active", "views": 4200,
+      "created_at": "2026-03-05T10:00:00Z"
+    },
+    {
+      "id": 8, "title": "Cámara Sony Alpha A7 IV Full Frame + Lente 28-70mm",
+      "description": "Cámara mirrorless Sony Alpha A7 IV con sensor CMOS Exmor R de 33MP, grabación 4K 60fps, IBIS de 5 ejes, doble ranura SD, WiFi/Bluetooth. Lente SEL2870 incluido.",
+      "price": 1850000, "currency": "ARS", "stock": 4, "condition": "new",
+      "category_id": 1, "seller_id": 1,
+      "images": ["https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1502920917128-1aa500764cbd?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 1670,
+      "created_at": "2026-03-09T13:00:00Z"
+    },
+    {
+      "id": 9, "title": "Zapatillas Nike Air Max 270 Talle 42",
+      "description": "Zapatillas Nike Air Max 270 originales, cámara de aire Max visible, parte superior en mesh transpirable. Colorway negro/blanco. Talle 42 ARG (US 9.5). Sin uso, caja original.",
+      "price": 89999, "currency": "ARS", "stock": 3, "condition": "new",
+      "category_id": 2, "seller_id": 4,
+      "images": ["https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1606107557195-0e29a4b5b4aa?w=600&h=600&fit=crop"],
+      "location": "Mendoza", "status": "active", "views": 760,
+      "created_at": "2026-03-16T10:00:00Z"
+    },
+    {
+      "id": 10, "title": "Campera Adidas Originals Track Jacket M",
+      "description": "Campera Adidas Originals retro track jacket, tela de poliéster reciclado, tres franjas icónicas, bolsillos con cierre, cuello camisero. Talle M. Color azul marino. Nueva con etiqueta.",
+      "price": 42000, "currency": "ARS", "stock": 7, "condition": "new",
+      "category_id": 2, "seller_id": 5,
+      "images": ["https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1544441893-675973e31985?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, GBA Norte", "status": "active", "views": 430,
+      "created_at": "2026-03-17T09:00:00Z"
+    },
+    {
+      "id": 11, "title": "Reloj Casio G-Shock GA-2100 Negro",
+      "description": "Reloj Casio G-Shock GA-2100 CasiOak, estructura Carbon Core Guard, resistente a impactos, 200m de resistencia al agua, cronógrafo, temporizador, alarma. Original con caja y garantía.",
+      "price": 78000, "currency": "ARS", "stock": 10, "condition": "new",
+      "category_id": 2, "seller_id": 2,
+      "images": ["https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1587836374828-4dbafa94cf0e?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 890,
+      "created_at": "2026-03-13T14:00:00Z"
+    },
+    {
+      "id": 12, "title": "Silla Gamer ThunderX3 EC3 Negra/Roja",
+      "description": "Silla gamer ThunderX3 EC3, estructura de acero, espuma de alta densidad, apoyabrazos 4D, soporte lumbar y cervical, reclinable 180°, altura ajustable. Carga máxima 150kg.",
+      "price": 185000, "currency": "ARS", "stock": 9, "condition": "new",
+      "category_id": 3, "seller_id": 3,
+      "images": ["https://images.unsplash.com/photo-1598550476439-6847785fcea6?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1611532736597-de2d4265fba3?w=600&h=600&fit=crop"],
+      "location": "Córdoba Capital", "status": "active", "views": 1100,
+      "created_at": "2026-03-12T11:00:00Z"
+    },
+    {
+      "id": 13, "title": "Escritorio para PC Altura Regulable 140x60cm",
+      "description": "Escritorio con altura regulable eléctrica entre 72cm y 118cm, tapa de MDF enchapado en nogal, estructura de acero, memoria de 3 posiciones, cable management incluido.",
+      "price": 145000, "currency": "ARS", "stock": 5, "condition": "new",
+      "category_id": 3, "seller_id": 1,
+      "images": ["https://images.unsplash.com/photo-1593642632559-0c6d3fc62b89?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 670,
+      "created_at": "2026-03-11T15:00:00Z"
+    },
+    {
+      "id": 14, "title": "Set de Ollas Tramontina Siena 5 piezas Inducción",
+      "description": "Juego de 5 ollas Tramontina Siena en acero inoxidable 18/10, aptas para inducción, gas y eléctrico. Incluye ollas de 16, 18, 20 y 22cm + cacerola 24cm. Tapa de vidrio.",
+      "price": 68000, "currency": "ARS", "stock": 14, "condition": "new",
+      "category_id": 3, "seller_id": 4,
+      "images": ["https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1584568694244-14fbdf83bd30?w=600&h=600&fit=crop"],
+      "location": "Mendoza", "status": "active", "views": 540,
+      "created_at": "2026-03-15T10:00:00Z"
+    },
+    {
+      "id": 15, "title": "Bicicleta MTB Trek Marlin 5 Rodado 29 Talle M",
+      "description": "Bicicleta de montaña Trek Marlin 5, cuadro de aluminio Alpha Gold, horquilla SR Suntour XCT 100mm, cambio Shimano Altus 8 velocidades, frenos hidráulicos Tektro. Talle M, rodado 29.",
+      "price": 420000, "currency": "ARS", "stock": 3, "condition": "new",
+      "category_id": 4, "seller_id": 5,
+      "images": ["https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1571068316344-75bc76f77890?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, GBA Norte", "status": "active", "views": 1230,
+      "created_at": "2026-03-08T12:00:00Z"
+    },
+    {
+      "id": 16, "title": "Pelota de Fútbol adidas FIFA World Cup 2026",
+      "description": "Pelota oficial adidas Al Rihla Pro replica FIFA World Cup 2026, cámara butyl de alta retención, 20 paneles fusionados, compatible para juego en césped y sintético.",
+      "price": 28000, "currency": "ARS", "stock": 40, "condition": "new",
+      "category_id": 4, "seller_id": 2,
+      "images": ["https://images.unsplash.com/photo-1431324155629-1a6deb1dec8d?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1575361204480-aadea25e6e68?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 890,
+      "created_at": "2026-03-18T09:00:00Z"
+    },
+    {
+      "id": 17, "title": "Trotadora Eléctrica Weslo Cadence G 5.9i",
+      "description": "Trotadora eléctrica Weslo Cadence G 5.9i, motor de 2HP, velocidad 0-16km/h, inclinación 2 niveles, pantalla LCD, 6 programas de entrenamiento, plegable, capacidad 113kg.",
+      "price": 195000, "currency": "ARS", "stock": 6, "condition": "new",
+      "category_id": 4, "seller_id": 3,
+      "images": ["https://images.unsplash.com/photo-1571902943202-507ec2618e8f?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1576678927484-cc907957088c?w=600&h=600&fit=crop"],
+      "location": "Córdoba Capital", "status": "active", "views": 760,
+      "created_at": "2026-03-10T14:00:00Z"
+    },
+    {
+      "id": 18, "title": "LEGO Technic Bugatti Chiron 42083 - 3599 piezas",
+      "description": "Set LEGO Technic Bugatti Chiron original, 3599 piezas, motor W16 funcional, caja de cambios, suspensión delantera y trasera, dirección. Para mayores de 16 años. Sin armar.",
+      "price": 89000, "currency": "ARS", "stock": 2, "condition": "new",
+      "category_id": 5, "seller_id": 4,
+      "images": ["https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1560961911-ba7ef651a56c?w=600&h=600&fit=crop"],
+      "location": "Mendoza", "status": "active", "views": 540,
+      "created_at": "2026-03-14T11:00:00Z"
+    },
+    {
+      "id": 19, "title": "Consola Nintendo Switch OLED Blanca + Mario Kart 8",
+      "description": "Nintendo Switch modelo OLED, pantalla OLED de 7\" vibrante, 64GB almacenamiento interno, dock mejorado con puerto LAN, controles Joy-Con blancos. Juego Mario Kart 8 incluido.",
+      "price": 310000, "currency": "ARS", "stock": 11, "condition": "new",
+      "category_id": 5, "seller_id": 5,
+      "images": ["https://images.unsplash.com/photo-1578303512597-81e6cc155b3e?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1555680202-c86f0e12f086?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, GBA Norte", "status": "active", "views": 2340,
+      "created_at": "2026-03-07T10:00:00Z"
+    },
+    {
+      "id": 20, "title": "Moto Honda CB500F 2024 Roja 5000km",
+      "description": "Honda CB500F 2024 color rojo, 5000km reales, servicio oficial al día, sin detalles. Motor paralelo bicilíndrico 471cc, 47CV. Papeles al día, patente paga.",
+      "price": 3200000, "currency": "ARS", "stock": 1, "condition": "used",
+      "category_id": 6, "seller_id": 2,
+      "images": ["https://images.unsplash.com/photo-1558981806-ec527fa84c39?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1449426468159-d96dbf08f19f?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 3450,
+      "created_at": "2026-03-06T09:00:00Z"
+    },
+    {
+      "id": 21, "title": "Tablet Samsung Galaxy Tab S9 FE 256GB WiFi",
+      "description": "Tablet Samsung Galaxy Tab S9 FE, pantalla TFT de 10.9\", 6GB RAM, 256GB almacenamiento, S Pen incluido, batería de 8000mAh, resistencia IP68. Con funda de regalo.",
+      "price": 289000, "currency": "ARS", "stock": 9, "condition": "new",
+      "category_id": 1, "seller_id": 3,
+      "images": ["https://images.unsplash.com/photo-1561154464-82e9adf32764?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1589739900266-43b2843f4c12?w=600&h=600&fit=crop"],
+      "location": "Córdoba Capital", "status": "active", "views": 870,
+      "created_at": "2026-03-13T16:00:00Z"
+    },
+    {
+      "id": 22, "title": "Monitor LG UltraGear 27\" 4K 144Hz IPS",
+      "description": "Monitor gaming LG UltraGear 27UN880, panel IPS 4K UHD 3840x2160, 144Hz, 1ms GTG, HDR400, AMD FreeSync Premium, HDMI 2.1, DisplayPort 1.4, USB-C 90W, soporte ergonómico.",
+      "price": 380000, "currency": "ARS", "stock": 7, "condition": "new",
+      "category_id": 1, "seller_id": 1,
+      "images": ["https://images.unsplash.com/photo-1527443224154-c4a3942d3acf?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1585792180666-f7347c490ee2?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 1320,
+      "created_at": "2026-03-09T11:00:00Z"
+    },
+    {
+      "id": 23, "title": "Auriculares Sony WH-1000XM5 Noise Cancelling",
+      "description": "Auriculares Sony WH-1000XM5, cancelación de ruido líder del sector, 30 horas de batería, carga rápida 3min=3h, sonido Hi-Res Audio, micrófono integrado, plegables.",
+      "price": 158000, "currency": "ARS", "stock": 16, "condition": "new",
+      "category_id": 1, "seller_id": 4,
+      "images": ["https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1484704849700-f032a568e944?w=600&h=600&fit=crop"],
+      "location": "Mendoza", "status": "active", "views": 1780,
+      "created_at": "2026-03-11T13:00:00Z"
+    },
+    {
+      "id": 24, "title": "Cafetera Nespresso Vertuo Next Premium",
+      "description": "Cafetera Nespresso Vertuo Next Premium, tecnología Centrifusion, 5 tamaños de tazas, pantalla LED, calentamiento en 30 segundos, depósito de 1.1L, compatible con 30+ cápsulas.",
+      "price": 85000, "currency": "ARS", "stock": 22, "condition": "new",
+      "category_id": 3, "seller_id": 5,
+      "images": ["https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, GBA Norte", "status": "active", "views": 920,
+      "created_at": "2026-03-16T12:00:00Z"
+    },
+    {
+      "id": 25, "title": "Mochila The North Face Jester 28L",
+      "description": "Mochila The North Face Jester 28L, compartimento para laptop 15\", bolsillo fleece para gafas, espalda FlexVent acolchada, tela FlashDry, panel acolchado en espalda. Color negro.",
+      "price": 52000, "currency": "ARS", "stock": 18, "condition": "new",
+      "category_id": 2, "seller_id": 2,
+      "images": ["https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1491553895911-0055eca6402d?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 650,
+      "created_at": "2026-03-15T14:00:00Z"
+    },
+    {
+      "id": 26, "title": "Drone DJI Mini 4 Pro + Cargador Rápido",
+      "description": "Drone DJI Mini 4 Pro, cámara 4K/60fps HDR, estabilización en 3 ejes, tiempo de vuelo 34 min, transmisión de video a 20km, Obstacle Sensing en 4 direcciones. Menos de 249g.",
+      "price": 780000, "currency": "ARS", "stock": 4, "condition": "new",
+      "category_id": 1, "seller_id": 3,
+      "images": ["https://images.unsplash.com/photo-1473968512647-3e447244af8f?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1508614589041-895b88991e3e?w=600&h=600&fit=crop"],
+      "location": "Córdoba Capital", "status": "active", "views": 2100,
+      "created_at": "2026-03-07T15:00:00Z"
+    },
+    {
+      "id": 27, "title": "Lavadora Automática LG 8kg Inverter Direct Drive",
+      "description": "Lavarropas automático LG de 8kg, motor Inverter Direct Drive 10 años de garantía, 14 programas, vapor, Turbo Wash, 6 Motion, ahorro de energía A+++. Sin instalación incluida.",
+      "price": 298000, "currency": "ARS", "stock": 7, "condition": "new",
+      "category_id": 3, "seller_id": 1,
+      "images": ["https://images.unsplash.com/photo-1582735689369-4fe89db7114c?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1545259742-89db7114c?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 1100,
+      "created_at": "2026-03-10T10:00:00Z"
+    },
+    {
+      "id": 28, "title": "Parlante Bluetooth JBL Charge 5 120W",
+      "description": "Parlante portátil JBL Charge 5, 120W de potencia, 20 horas de reproducción, resistente al agua IP67, función de carga de dispositivos, JBL PartyBoost para múltiples parlantes.",
+      "price": 95000, "currency": "ARS", "stock": 25, "condition": "new",
+      "category_id": 1, "seller_id": 4,
+      "images": ["https://images.unsplash.com/photo-1608043152269-423dbba4e7e1?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1545454675-3531b543be5d?w=600&h=600&fit=crop"],
+      "location": "Mendoza", "status": "active", "views": 1450,
+      "created_at": "2026-03-12T13:00:00Z"
+    },
+    {
+      "id": 29, "title": "Refrigerador Samsung French Door 538L No Frost",
+      "description": "Heladera Samsung French Door de 538L, No Frost total, panel digital, Twin Cooling Plus, cajón Flex Zone temperatura variable, dispensador de agua y hielo. Color inox.",
+      "price": 580000, "currency": "ARS", "stock": 3, "condition": "new",
+      "category_id": 3, "seller_id": 5,
+      "images": ["https://images.unsplash.com/photo-1584568694244-14fbdf83bd30?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, GBA Norte", "status": "active", "views": 880,
+      "created_at": "2026-03-08T11:00:00Z"
+    },
+    {
+      "id": 30, "title": "iPad Air M2 11\" 256GB WiFi + Cellular",
+      "description": "iPad Air con chip M2, pantalla Liquid Retina de 11\", 256GB, WiFi 6E + Cellular, compatible con Apple Pencil Pro y Magic Keyboard. Azul. Con garantía oficial Argentina.",
+      "price": 520000, "currency": "ARS", "stock": 13, "condition": "new",
+      "category_id": 1, "seller_id": 2,
+      "images": ["https://images.unsplash.com/photo-1544244015-0df4b3ffc6b0?w=600&h=600&fit=crop", "https://images.unsplash.com/photo-1561154464-82e9adf32764?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "status": "active", "views": 1670,
+      "created_at": "2026-03-09T14:00:00Z"
+    }
+  ],
+
+  "services": [
+    {
+      "id": 1, "title": "Plomero matriculado — Destapes, instalaciones y reparaciones",
+      "description": "Plomero matriculado con 15 años de experiencia. Destapes garantizados, instalación de sanitarios, grifería, calefones y termotanques. Urgencias 24hs. Presupuesto sin cargo.",
+      "price_from": 8000, "price_to": 50000, "currency": "ARS", "price_type": "quote",
+      "category_id": 1, "provider_id": 3,
+      "images": ["https://images.unsplash.com/photo-1621905252507-b35492cc74b4?w=600&h=600&fit=crop"],
+      "location": "Córdoba Capital", "zones_covered": ["Córdoba Capital", "Gran Córdoba"],
+      "status": "active", "views": 890, "created_at": "2026-03-01T09:00:00Z"
+    },
+    {
+      "id": 2, "title": "Electricista matriculado — Instalaciones y reparaciones",
+      "description": "Electricista matriculado. Instalaciones eléctricas residenciales y comerciales, tableros, termomagnéticas, cableado estructurado. Cumplimiento de normas ENRE. Trabajo en 24-48hs.",
+      "price_from": 12000, "price_to": 80000, "currency": "ARS", "price_type": "quote",
+      "category_id": 2, "provider_id": 4,
+      "images": ["https://images.unsplash.com/photo-1621905251918-48416bd8575a?w=600&h=600&fit=crop"],
+      "location": "Mendoza", "zones_covered": ["Mendoza Capital", "Gran Mendoza"],
+      "status": "active", "views": 1120, "created_at": "2026-03-02T10:00:00Z"
+    },
+    {
+      "id": 3, "title": "Gasista matriculado — Instalaciones de gas natural y GNC",
+      "description": "Gasista matriculado habilitado por ENARGAS. Instalación y reparación de calefones, estufas, cocinas, termotanques y instalaciones nuevas. Certificación y habilitación incluida.",
+      "price_from": 15000, "price_to": 100000, "currency": "ARS", "price_type": "quote",
+      "category_id": 3, "provider_id": 5,
+      "images": ["https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, GBA Norte", "zones_covered": ["GBA Norte", "CABA Norte"],
+      "status": "active", "views": 760, "created_at": "2026-03-03T11:00:00Z"
+    },
+    {
+      "id": 4, "title": "Peluquería a domicilio — Corte, color y tratamientos",
+      "description": "Peluquera profesional con 10 años de experiencia. Servicio a domicilio. Corte de cabello, coloración, mechas, keratina y tratamientos capilares. Turno con horario a convenir.",
+      "price_from": 5000, "price_to": 25000, "currency": "ARS", "price_type": "fixed",
+      "category_id": 4, "provider_id": 2,
+      "images": ["https://images.unsplash.com/photo-1560066984-138dadb4c035?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "zones_covered": ["CABA", "GBA"],
+      "status": "active", "views": 1450, "created_at": "2026-03-04T09:00:00Z"
+    },
+    {
+      "id": 5, "title": "Servicio de limpieza integral de hogar",
+      "description": "Servicio de limpieza profesional para hogares y oficinas. Limpieza profunda, mantenimiento semanal o mensual. Personal de confianza, productos incluidos. Presupuesto por m².",
+      "price_from": 6000, "price_to": 30000, "currency": "ARS", "price_type": "hourly",
+      "category_id": 5, "provider_id": 1,
+      "images": ["https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "zones_covered": ["CABA", "GBA Norte", "GBA Oeste"],
+      "status": "active", "views": 2100, "created_at": "2026-03-05T10:00:00Z"
+    },
+    {
+      "id": 6, "title": "Pintura interior y exterior — Pintor profesional",
+      "description": "Pintor profesional con 20 años de experiencia. Pintura interior y exterior de viviendas, edificios y locales comerciales. Materiales opcionales. Presupuesto sin cargo a domicilio.",
+      "price_from": 3000, "price_to": null, "currency": "ARS", "price_type": "quote",
+      "category_id": 6, "provider_id": 3,
+      "images": ["https://images.unsplash.com/photo-1562259949-e8e7689d7828?w=600&h=600&fit=crop"],
+      "location": "Córdoba Capital", "zones_covered": ["Córdoba Capital", "Gran Córdoba"],
+      "status": "active", "views": 870, "created_at": "2026-03-06T11:00:00Z"
+    },
+    {
+      "id": 7, "title": "Carpintería en madera — Muebles a medida",
+      "description": "Carpintero con 25 años de experiencia. Fabricación de muebles a medida, placares, cocinas, bibliotecas y mesadas. Trabajo en madera maciza, melamina y MDF. Presupuesto gratis.",
+      "price_from": 20000, "price_to": null, "currency": "ARS", "price_type": "quote",
+      "category_id": 7, "provider_id": 4,
+      "images": ["https://images.unsplash.com/photo-1504148455328-c376907d081c?w=600&h=600&fit=crop"],
+      "location": "Mendoza", "zones_covered": ["Mendoza"],
+      "status": "active", "views": 640, "created_at": "2026-03-07T09:00:00Z"
+    },
+    {
+      "id": 8, "title": "Mecánico a domicilio — Service y reparaciones",
+      "description": "Mecánico con 18 años de experiencia. Service de autos a domicilio: cambio de aceite, pastillas de freno, distribución, diagnóstico computarizado. Sin mover tu auto del garaje.",
+      "price_from": 10000, "price_to": 60000, "currency": "ARS", "price_type": "quote",
+      "category_id": 8, "provider_id": 5,
+      "images": ["https://images.unsplash.com/photo-1486262715619-67b85e0b08d3?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, GBA Norte", "zones_covered": ["GBA Norte", "GBA Oeste"],
+      "status": "active", "views": 1230, "created_at": "2026-03-08T14:00:00Z"
+    },
+    {
+      "id": 9, "title": "Soporte técnico informático — PC, Mac y redes",
+      "description": "Técnico en sistemas con 12 años de experiencia. Reparación de PCs y notebooks, formateo e instalación de software, configuración de redes WiFi, soporte remoto disponible.",
+      "price_from": 5000, "price_to": 40000, "currency": "ARS", "price_type": "hourly",
+      "category_id": 9, "provider_id": 2,
+      "images": ["https://images.unsplash.com/photo-1518770660439-4636190af475?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "zones_covered": ["CABA", "GBA"],
+      "status": "active", "views": 1890, "created_at": "2026-03-09T10:00:00Z"
+    },
+    {
+      "id": 10, "title": "Clases de inglés — Todos los niveles",
+      "description": "Profesora de inglés certificada Cambridge CELTA. Clases individuales o grupales, presenciales o virtuales. Inglés general, de negocios y preparación para exámenes FCE/CAE.",
+      "price_from": 4000, "price_to": 8000, "currency": "ARS", "price_type": "hourly",
+      "category_id": 10, "provider_id": 1,
+      "images": ["https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "zones_covered": ["Virtual — todo el país"],
+      "status": "active", "views": 3200, "created_at": "2026-03-10T09:00:00Z"
+    },
+    {
+      "id": 11, "title": "Fotografía y video para eventos — Bodas y 15 años",
+      "description": "Fotógrafo y videógrafo profesional con 8 años de experiencia en eventos sociales. Edición de fotos y video incluida. Álbum digital y físico disponible. Paquetes a medida.",
+      "price_from": 80000, "price_to": 350000, "currency": "ARS", "price_type": "fixed",
+      "category_id": 10, "provider_id": 3,
+      "images": ["https://images.unsplash.com/photo-1471341971476-ae15ff5dd4ea?w=600&h=600&fit=crop"],
+      "location": "Córdoba Capital", "zones_covered": ["Córdoba", "Buenos Aires", "Mendoza"],
+      "status": "active", "views": 2450, "created_at": "2026-03-11T11:00:00Z"
+    },
+    {
+      "id": 12, "title": "Diseño web y desarrollo — Landing pages y tiendas online",
+      "description": "Desarrollador web full-stack con 10 años de experiencia. Landing pages, tiendas online (WooCommerce, Shopify, custom), apps web y mobile. Soporte post-entrega incluido.",
+      "price_from": 150000, "price_to": 800000, "currency": "ARS", "price_type": "fixed",
+      "category_id": 9, "provider_id": 4,
+      "images": ["https://images.unsplash.com/photo-1461749280684-dccba630e2f6?w=600&h=600&fit=crop"],
+      "location": "Mendoza", "zones_covered": ["Virtual — todo el país"],
+      "status": "active", "views": 4100, "created_at": "2026-03-12T10:00:00Z"
+    },
+    {
+      "id": 13, "title": "Jardín y poda — Mantenimiento de espacios verdes",
+      "description": "Jardinero con 15 años de experiencia. Mantenimiento mensual de jardines, poda de árboles y arbustos, diseño de espacios verdes, instalación de sistemas de riego automático.",
+      "price_from": 8000, "price_to": 50000, "currency": "ARS", "price_type": "quote",
+      "category_id": 10, "provider_id": 5,
+      "images": ["https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, GBA Norte", "zones_covered": ["GBA Norte", "GBA Oeste"],
+      "status": "active", "views": 780, "created_at": "2026-03-13T09:00:00Z"
+    },
+    {
+      "id": 14, "title": "Contador público — Monotributo, Autónomos y Sociedades",
+      "description": "Contador Público Nacional. Inscripción y recategorización en AFIP, liquidación de monotributo e IVA, balances, sueldos y cargas sociales. Atención presencial y virtual.",
+      "price_from": 15000, "price_to": 80000, "currency": "ARS", "price_type": "monthly",
+      "category_id": 10, "provider_id": 2,
+      "images": ["https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "zones_covered": ["Virtual — todo el país"],
+      "status": "active", "views": 2890, "created_at": "2026-03-14T10:00:00Z"
+    },
+    {
+      "id": 15, "title": "Personal trainer — Entrenamiento en domicilio o gym",
+      "description": "Personal trainer certificado ISAK nivel 1. Planes de entrenamiento personalizados, nutrición básica incluida. Seguimiento semanal por WhatsApp. Primera sesión de prueba gratis.",
+      "price_from": 12000, "price_to": 50000, "currency": "ARS", "price_type": "monthly",
+      "category_id": 10, "provider_id": 1,
+      "images": ["https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=600&h=600&fit=crop"],
+      "location": "Buenos Aires, CABA", "zones_covered": ["CABA", "GBA"],
+      "status": "active", "views": 1670, "created_at": "2026-03-15T09:00:00Z"
+    }
+  ],
+
+  "favorites": [],
+  "orders": [],
+  "reviews": []
+}

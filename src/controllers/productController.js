@@ -1,19 +1,25 @@
 const db = require('../config/database');
+const { parsePagination, parseSortOrder } = require('../middleware/validate');
 
 // ============================================================
 // GET /products
-// Query params opcionales: category, search, condition, page, limit
+// Query params: category, search, condition, min_price, max_price,
+//               sort (price|title|views|created_at), order (asc|desc),
+//               page, limit
 // ============================================================
 const getProducts = async (req, res) => {
   const {
     category,
     search,
     condition,
-    page  = 1,
-    limit = 20
+    min_price,
+    max_price,
+    seller_id,
   } = req.query;
 
-  const offset = (page - 1) * limit;
+  const { page, limit, offset } = parsePagination(req.query);
+  const { field, order }        = parseSortOrder(req.query, ['price', 'title', 'views', 'created_at']);
+
   const params = [];
   const conditions = ["p.status = 'active'"];
 
@@ -28,6 +34,18 @@ const getProducts = async (req, res) => {
   if (search) {
     params.push(`%${search}%`);
     conditions.push(`(p.title ILIKE $${params.length} OR p.description ILIKE $${params.length})`);
+  }
+  if (min_price) {
+    params.push(parseFloat(min_price));
+    conditions.push(`p.price >= $${params.length}`);
+  }
+  if (max_price) {
+    params.push(parseFloat(max_price));
+    conditions.push(`p.price <= $${params.length}`);
+  }
+  if (seller_id) {
+    params.push(parseInt(seller_id));
+    conditions.push(`p.seller_id = $${params.length}`);
   }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
@@ -44,7 +62,7 @@ const getProducts = async (req, res) => {
        LEFT JOIN product_categories pc ON p.category_id = pc.id
        LEFT JOIN users u ON p.seller_id = u.id
        ${where}
-       ORDER BY p.created_at DESC
+       ORDER BY p.${field} ${order}
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
@@ -61,9 +79,10 @@ const getProducts = async (req, res) => {
     res.json({
       data:       result.rows,
       total:      parseInt(countResult.rows[0].count),
-      page:       parseInt(page),
-      limit:      parseInt(limit),
-      totalPages: Math.ceil(countResult.rows[0].count / limit)
+      page,
+      limit,
+      totalPages: Math.ceil(countResult.rows[0].count / limit),
+      sort:       { field, order },
     });
   } catch (err) {
     console.error('Error en getProducts:', err);

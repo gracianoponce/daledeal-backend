@@ -1,0 +1,427 @@
+/**
+ * DALE DEAL — Controlador de pagos (Mercado Pago Checkout Pro)
+ *
+ * Flujo:
+ *   1) Usuario crea una orden via POST /orders
+ *   2) Frontend llama POST /payments/preference con { order_id }
+ *   3) Backend arma preferencia MP, guarda preference_id en la orden
+ *   4) Frontend redirige a `init_point` (URL de MP)
+ *   5) Usuario paga en MP
+ *   6) MP redirige a /HTML/pago-exitoso.html?order_id=X
+ *   7) MP notifica al webhook POST /payments/webhook (async)
+ *   8) Webhook consulta el pago, actualiza orders.payment_status
+ *      y crea el registro en seller_payouts
+ */
+
+const crypto = require('crypto');
+const db = require('../config/database');
+const mp = require('../config/mercadopago');
+
+const COMMISSION_RATE = parseFloat(process.env.MARKETPLACE_COMMISSION_RATE || '0.05');
+const APP_BASE_URL    = process.env.APP_BASE_URL    || 'http://localhost:3000';
+const FRONTEND_URL    = process.env.FRONTEND_URL    || 'http://localhost:5500';
+
+// ============================================================
+// Helpers
+// ============================================================
+
+/**
+ * Mapea el status de MP al payment_status que guardamos en orders.
+ * MP docs: https://www.mercadopago.com.ar/developers/es/reference/payments/_payments/post
+ */
+function mpStatusToLocal(mpStatus) {
+  const map = {
+    pending:       'pending',
+    approved:      'paid',
+    authorized:    'authorized',
+    in_process:    'in_process',
+    in_mediation:  'in_process',
+    rejected:      'rejected',
+    cancelled:     'cancelled',
+    refunded:      'refunded',
+    charged_back:  'charged_back',
+  };
+  return map[mpStatus] || 'pending';
+}
+
+/**
+ * Mapea el payment_status al status "comercial" de la orden.
+ */
+function paymentToOrderStatus(paymentStatus, current) {
+  if (paymentStatus === 'paid')   return 'confirmed';
+  if (paymentStatus === 'refunded' || paymentStatus === 'charged_back') return 'cancelled';
+  if (paymentStatus === 'rejected' || paymentStatus === 'cancelled')    return current === 'pending' ? 'cancelled' : current;
+  return current;
+}
+
+/**
+ * Valida la firma del webhook (x-signature) contra MP_WEBHOOK_SECRET.
+ * https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks
+ */
+function verifyWebhookSignature(req) {
+  const secret = process.env.MP_WEBHOOK_SECRET;
+  if (!secret) {
+    // Si no hay secret configurado, aceptamos sin validar (útil en dev)
+    console.warn('[mp-webhook] MP_WEBHOOK_SECRET no configurado — aceptando sin validar');
+    return true;
+  }
+
+  const xSignature = req.headers['x-signature'];
+  const xRequestId = req.headers['x-request-id'];
+  if (!xSignature) return false;
+
+  // x-signature tiene formato: "ts=1700000000,v1=abcdef..."
+  const parts = Object.fromEntries(
+    String(xSignature).split(',').map(p => p.trim().split('=').map(s => s.trim()))
+  );
+  const ts = parts.ts;
+  const hash = parts.v1;
+  if (!ts || !hash) return false;
+
+  const dataId = req.query['data.id'] || (req.body?.data?.id);
+  if (!dataId) return false;
+
+  const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
+  const expected = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
+
+  // comparación segura
+  try {
+    return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Calcula la comisión sobre el total (redondeada a 2 decimales).
+ */
+function calculateCommission(total) {
+  return Math.round(total * COMMISSION_RATE * 100) / 100;
+}
+
+// ============================================================
+// POST /payments/preference
+// ============================================================
+const createPreference = async (req, res) => {
+  const { order_id } = req.body;
+  if (!order_id) return res.status(400).json({ error: 'order_id es obligatorio' });
+
+  if (!mp.isConfigured) {
+    return res.status(503).json({ error: 'Pagos no disponibles (MP no configurado)' });
+  }
+
+  try {
+    // Traemos la orden con datos del producto
+    const orderRes = await db.query(
+      `SELECT o.*,
+              p.title AS product_title,
+              (SELECT img FROM UNNEST(p.images) img LIMIT 1) AS product_image,
+              u.email AS buyer_email,
+              u.name  AS buyer_name
+         FROM orders o
+         JOIN users u ON u.id = o.buyer_id
+         LEFT JOIN products p ON p.id = o.product_id
+        WHERE o.id = $1`,
+      [order_id]
+    );
+
+    if (orderRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Orden no encontrada' });
+    }
+
+    const order = orderRes.rows[0];
+
+    if (order.buyer_id !== req.user.id) {
+      return res.status(403).json({ error: 'No tenés permiso para pagar esta orden' });
+    }
+
+    if (order.payment_status === 'paid') {
+      return res.status(400).json({ error: 'Esta orden ya fue pagada' });
+    }
+
+    // Si ya existe preferencia, la devolvemos (idempotencia del lado nuestro)
+    if (order.mp_preference_id && order.mp_init_point) {
+      return res.json({
+        ok:                  true,
+        preference_id:       order.mp_preference_id,
+        init_point:          order.mp_init_point,
+        sandbox_init_point:  order.mp_sandbox_init_point,
+        is_sandbox:          mp.isSandbox,
+        total:               parseFloat(order.total_price),
+        commission:          parseFloat(order.commission_amount || 0),
+        net_to_seller:       parseFloat(order.total_price) - parseFloat(order.commission_amount || 0),
+        order_id:            order.id,
+      });
+    }
+
+    const externalRef = `daledeal-order-${order.id}-${Date.now()}`;
+    const commission  = calculateCommission(parseFloat(order.total_price));
+
+    const preferenceBody = {
+      items: [{
+        id:          String(order.product_id || order.id),
+        title:       order.product_title || `Compra Dale Deal #${order.id}`,
+        description: order.notes || '',
+        picture_url: order.product_image || undefined,
+        category_id: 'marketplace',
+        quantity:    order.quantity,
+        currency_id: order.currency || 'ARS',
+        unit_price:  parseFloat(order.unit_price),
+      }],
+      payer: {
+        email: order.buyer_email,
+        name:  order.buyer_name,
+      },
+      external_reference: externalRef,
+      notification_url:   `${APP_BASE_URL}/payments/webhook`,
+      back_urls: {
+        success: `${FRONTEND_URL}/HTML/pago-exitoso.html?order_id=${order.id}`,
+        failure: `${FRONTEND_URL}/HTML/pago-fallido.html?order_id=${order.id}`,
+        pending: `${FRONTEND_URL}/HTML/pago-pendiente.html?order_id=${order.id}`,
+      },
+      // MP solo acepta auto_return cuando back_urls son HTTPS públicas.
+      // En dev (FRONTEND_URL=localhost), lo omitimos para evitar
+      // "auto_return invalid. back_url.success must be defined".
+      ...(FRONTEND_URL.startsWith('https://') && !FRONTEND_URL.includes('localhost')
+        ? { auto_return: 'approved' }
+        : {}),
+      statement_descriptor: 'DALE DEAL',
+      // marketplace_fee requiere cuentas conectadas via OAuth
+      // por ahora comisión la calculamos y guardamos nosotros
+      metadata: {
+        order_id:          order.id,
+        buyer_id:          order.buyer_id,
+        seller_id:         order.seller_id,
+        commission_amount: commission,
+      },
+    };
+
+    const client     = mp.requireClient();
+    const preference = new mp.Preference(client);
+    const result     = await preference.create({
+      body: preferenceBody,
+      requestOptions: { idempotencyKey: `order-${order.id}-pref` },
+    });
+
+    await db.query(
+      `UPDATE orders
+          SET mp_preference_id       = $1,
+              mp_external_reference  = $2,
+              mp_init_point          = $3,
+              mp_sandbox_init_point  = $4,
+              commission_rate        = $5,
+              commission_amount      = $6,
+              updated_at             = NOW()
+        WHERE id = $7`,
+      [
+        result.id,
+        externalRef,
+        result.init_point,
+        result.sandbox_init_point,
+        COMMISSION_RATE,
+        commission,
+        order.id,
+      ]
+    );
+
+    return res.json({
+      ok:                 true,
+      preference_id:      result.id,
+      init_point:         result.init_point,
+      sandbox_init_point: result.sandbox_init_point,
+      is_sandbox:         mp.isSandbox,
+      total:              parseFloat(order.total_price),
+      commission,
+      net_to_seller:      parseFloat(order.total_price) - commission,
+      order_id:           order.id,
+    });
+  } catch (err) {
+    console.error('[mp] createPreference error:', err);
+    return res.status(500).json({ error: 'No se pudo crear la preferencia de pago' });
+  }
+};
+
+// ============================================================
+// POST /payments/webhook  (sin auth — viene de MP)
+// ============================================================
+const handleWebhook = async (req, res) => {
+  // Respondemos rápido siempre 200 para que MP no reintente sin parar.
+  // El procesamiento real se hace de forma asíncrona.
+  res.status(200).send('ok');
+
+  try {
+    const signatureValid = verifyWebhookSignature(req);
+    const requestId      = req.headers['x-request-id'] || null;
+    const topic          = req.query.topic || req.query.type || req.body?.type;
+    const dataId         = req.query['data.id'] || req.body?.data?.id;
+
+    // Idempotencia: si ya procesamos este request_id, salir
+    if (requestId) {
+      const dupe = await db.query(
+        'SELECT id FROM payment_events WHERE request_id = $1 LIMIT 1',
+        [requestId]
+      );
+      if (dupe.rows.length > 0) return;
+    }
+
+    if (!dataId) {
+      console.warn('[mp-webhook] Notificación sin data.id, ignorando');
+      return;
+    }
+
+    // Solo nos importan los eventos de payment por ahora
+    if (topic !== 'payment' && topic !== 'payment.created' && topic !== 'payment.updated') {
+      console.log('[mp-webhook] Topic ignorado:', topic);
+      return;
+    }
+
+    // Consultamos el pago en MP
+    const client  = mp.requireClient();
+    const payment = new mp.Payment(client);
+    const mpPayment = await payment.get({ id: dataId });
+
+    if (!mpPayment) {
+      console.warn('[mp-webhook] No se pudo obtener el pago', dataId);
+      return;
+    }
+
+    const externalRef = mpPayment.external_reference;
+    const newStatus   = mpStatusToLocal(mpPayment.status);
+
+    // Buscamos la orden
+    const orderRes = await db.query(
+      `SELECT id, payment_status, status, seller_id, buyer_id,
+              total_price, commission_amount
+         FROM orders
+        WHERE mp_external_reference = $1 OR mp_payment_id = $2
+        LIMIT 1`,
+      [externalRef, String(dataId)]
+    );
+
+    if (orderRes.rows.length === 0) {
+      console.warn('[mp-webhook] Orden no encontrada para external_ref', externalRef);
+      return;
+    }
+
+    const order = orderRes.rows[0];
+
+    // Actualizamos orden (transaccional con el log)
+    const client2 = await db.pool.connect();
+    try {
+      await client2.query('BEGIN');
+
+      await client2.query(
+        `UPDATE orders
+            SET mp_payment_id = $1,
+                payment_status = $2,
+                status = $3,
+                paid_at = CASE WHEN $2 = 'paid' AND paid_at IS NULL THEN NOW() ELSE paid_at END,
+                updated_at = NOW()
+          WHERE id = $4`,
+        [
+          String(dataId),
+          newStatus,
+          paymentToOrderStatus(newStatus, order.status),
+          order.id,
+        ]
+      );
+
+      // Si pasó a paid, creamos el payout para el vendedor
+      if (newStatus === 'paid') {
+        const gross      = parseFloat(order.total_price);
+        const commission = parseFloat(order.commission_amount) || calculateCommission(gross);
+        const net        = Math.round((gross - commission) * 100) / 100;
+
+        await client2.query(
+          `INSERT INTO seller_payouts
+             (seller_id, order_id, gross_amount, commission_amount, net_amount, currency, status)
+           VALUES ($1, $2, $3, $4, $5, 'ARS', 'pending')
+           ON CONFLICT (order_id) DO NOTHING`,
+          [order.seller_id, order.id, gross, commission, net]
+        );
+      }
+
+      await client2.query(
+        `INSERT INTO payment_events
+           (order_id, mp_payment_id, mp_topic, mp_action, status, status_detail,
+            raw_payload, signature_valid, request_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (request_id) DO NOTHING`,
+        [
+          order.id,
+          String(dataId),
+          topic,
+          req.body?.action || topic,
+          mpPayment.status,
+          mpPayment.status_detail,
+          JSON.stringify({ headers: {
+            'x-signature':  req.headers['x-signature'],
+            'x-request-id': req.headers['x-request-id'],
+          }, query: req.query, body: req.body, mpPayment }),
+          signatureValid,
+          requestId,
+        ]
+      );
+
+      await client2.query('COMMIT');
+      console.log(`[mp-webhook] Orden ${order.id} → ${newStatus}`);
+    } catch (txErr) {
+      await client2.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client2.release();
+    }
+  } catch (err) {
+    console.error('[mp-webhook] Error procesando:', err);
+  }
+};
+
+// ============================================================
+// GET /payments/:orderId/status
+// ============================================================
+const getStatus = async (req, res) => {
+  const orderId = parseInt(req.params.orderId, 10);
+  if (Number.isNaN(orderId)) return res.status(400).json({ error: 'orderId inválido' });
+
+  try {
+    const result = await db.query(
+      `SELECT o.id, o.buyer_id, o.seller_id, o.product_id, o.quantity,
+              o.total_price, o.currency, o.status, o.payment_status,
+              o.mp_payment_id, o.mp_preference_id, o.paid_at, o.created_at,
+              o.commission_amount,
+              p.title  AS product_title,
+              (SELECT id FROM conversations c
+                 WHERE c.item_type  = 'product'
+                   AND c.product_id = o.product_id
+                   AND c.buyer_id   = o.buyer_id
+                   AND c.seller_id  = o.seller_id
+                 ORDER BY c.created_at DESC
+                 LIMIT 1
+              ) AS conversation_id
+         FROM orders o
+         LEFT JOIN products p ON p.id = o.product_id
+        WHERE o.id = $1`,
+      [orderId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Orden no encontrada' });
+    }
+
+    const order = result.rows[0];
+    if (order.buyer_id !== req.user.id && order.seller_id !== req.user.id) {
+      return res.status(403).json({ error: 'No tenés permiso para ver esta orden' });
+    }
+
+    return res.json({ order });
+  } catch (err) {
+    console.error('[mp] getStatus error:', err);
+    return res.status(500).json({ error: 'Error al consultar el estado del pago' });
+  }
+};
+
+module.exports = {
+  createPreference,
+  handleWebhook,
+  getStatus,
+};
