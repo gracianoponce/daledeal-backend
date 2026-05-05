@@ -16,6 +16,11 @@
 const crypto = require('crypto');
 const db = require('../config/database');
 const mp = require('../config/mercadopago');
+const {
+  sendEmail,
+  orderPaidBuyerTemplate,
+  newSaleSellerTemplate,
+} = require('../services/email');
 
 const COMMISSION_RATE = parseFloat(process.env.MARKETPLACE_COMMISSION_RATE || '0.05');
 const APP_BASE_URL    = process.env.APP_BASE_URL    || 'http://localhost:3000';
@@ -155,19 +160,40 @@ const createPreference = async (req, res) => {
     }
 
     const externalRef = `daledeal-order-${order.id}-${Date.now()}`;
-    const commission  = calculateCommission(parseFloat(order.total_price));
+
+    // Comisión: se calcula SOLO sobre el subtotal del producto,
+    // no sobre el costo del envío (eso pasa derecho al vendedor).
+    const productSubtotal = parseFloat(order.unit_price) * Number(order.quantity);
+    const shippingCost    = parseFloat(order.shipping_cost || 0);
+    const commission      = calculateCommission(productSubtotal);
+
+    // En el checkout MP mostramos el producto y, si corresponde,
+    // un ítem adicional por el costo del envío.
+    const items = [{
+      id:          String(order.product_id || order.id),
+      title:       order.product_title || `Compra Dale Deal #${order.id}`,
+      description: order.notes || '',
+      picture_url: order.product_image || undefined,
+      category_id: 'marketplace',
+      quantity:    order.quantity,
+      currency_id: order.currency || 'ARS',
+      unit_price:  parseFloat(order.unit_price),
+    }];
+
+    if (shippingCost > 0) {
+      items.push({
+        id:          `shipping-${order.id}`,
+        title:       'Envío a domicilio',
+        description: 'Costo de envío',
+        category_id: 'shipping',
+        quantity:    1,
+        currency_id: order.currency || 'ARS',
+        unit_price:  shippingCost,
+      });
+    }
 
     const preferenceBody = {
-      items: [{
-        id:          String(order.product_id || order.id),
-        title:       order.product_title || `Compra Dale Deal #${order.id}`,
-        description: order.notes || '',
-        picture_url: order.product_image || undefined,
-        category_id: 'marketplace',
-        quantity:    order.quantity,
-        currency_id: order.currency || 'ARS',
-        unit_price:  parseFloat(order.unit_price),
-      }],
+      items,
       payer: {
         email: order.buyer_email,
         name:  order.buyer_name,
@@ -365,6 +391,15 @@ const handleWebhook = async (req, res) => {
 
       await client2.query('COMMIT');
       console.log(`[mp-webhook] Orden ${order.id} → ${newStatus}`);
+
+      // Mandar emails de notificación cuando la orden pasa a "paid".
+      // Lo hacemos FUERA de la transacción y sin await — si falla un email
+      // no afecta a la orden. Si falla el envío, queda registrado en logs.
+      if (newStatus === 'paid') {
+        sendOrderPaidEmails(order.id).catch(err =>
+          console.error('[mp-webhook] sendOrderPaidEmails error:', err.message)
+        );
+      }
     } catch (txErr) {
       await client2.query('ROLLBACK');
       throw txErr;
@@ -375,6 +410,58 @@ const handleWebhook = async (req, res) => {
     console.error('[mp-webhook] Error procesando:', err);
   }
 };
+
+// ============================================================
+// Helper: trae los datos completos de la orden + ambos usuarios
+// y dispara emails de "compra confirmada" (al comprador) y
+// "tenés una venta nueva" (al vendedor).
+// ============================================================
+async function sendOrderPaidEmails(orderId) {
+  const r = await db.query(
+    `SELECT o.id, o.total_price, o.shipping_method, o.shipping_city,
+            p.title AS product_title,
+            ub.email AS buyer_email,  ub.name AS buyer_name,
+            us.email AS seller_email, us.name AS seller_name
+       FROM orders o
+       LEFT JOIN products p ON p.id = o.product_id
+       LEFT JOIN users ub   ON ub.id = o.buyer_id
+       LEFT JOIN users us   ON us.id = o.seller_id
+      WHERE o.id = $1`,
+    [orderId]
+  );
+  if (r.rows.length === 0) return;
+  const o = r.rows[0];
+  const isPickup = o.shipping_method === 'pickup';
+
+  // 1) Email al COMPRADOR — compra confirmada
+  if (o.buyer_email) {
+    const tpl = orderPaidBuyerTemplate({
+      buyerName:    o.buyer_name,
+      orderId:      o.id,
+      productTitle: o.product_title,
+      total:        o.total_price,
+      sellerName:   o.seller_name,
+      isPickup,
+    });
+    sendEmail({ to: o.buyer_email, subject: tpl.subject, html: tpl.html, text: tpl.text })
+      .catch(e => console.error('[email] buyer notify failed:', e.message));
+  }
+
+  // 2) Email al VENDEDOR — venta nueva
+  if (o.seller_email) {
+    const tpl = newSaleSellerTemplate({
+      sellerName:   o.seller_name,
+      orderId:      o.id,
+      productTitle: o.product_title,
+      buyerName:    o.buyer_name,
+      total:        o.total_price,
+      isPickup,
+      shippingCity: o.shipping_city,
+    });
+    sendEmail({ to: o.seller_email, subject: tpl.subject, html: tpl.html, text: tpl.text })
+      .catch(e => console.error('[email] seller notify failed:', e.message));
+  }
+}
 
 // ============================================================
 // GET /payments/:orderId/status
@@ -389,6 +476,8 @@ const getStatus = async (req, res) => {
               o.total_price, o.currency, o.status, o.payment_status,
               o.mp_payment_id, o.mp_preference_id, o.paid_at, o.created_at,
               o.commission_amount,
+              o.shipping_method, o.shipping_cost,
+              o.tracking_number, o.dispatched_at, o.delivered_at,
               p.title  AS product_title,
               (SELECT id FROM conversations c
                  WHERE c.item_type  = 'product'

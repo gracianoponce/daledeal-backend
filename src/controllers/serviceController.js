@@ -39,10 +39,20 @@ const getServices = async (req, res) => {
          s.id, s.title, s.price_from, s.price_to, s.currency, s.price_type,
          s.images, s.location, s.zones_covered, s.views, s.created_at,
          sc.name AS category_name, sc.slug AS category_slug,
-         u.id AS provider_id, u.name AS provider_name, u.avatar_url AS provider_avatar
+         u.id AS provider_id, u.name AS provider_name, u.avatar_url AS provider_avatar,
+         COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,
+         COALESCE(rs.review_count, 0)::INT AS review_count
        FROM services s
        LEFT JOIN service_categories sc ON s.category_id = sc.id
        LEFT JOIN users u ON s.provider_id = u.id
+       LEFT JOIN (
+         SELECT item_id,
+                AVG(rating)::NUMERIC(3,2) AS avg_rating,
+                COUNT(*)                   AS review_count
+           FROM reviews
+          WHERE item_type = 'service'
+          GROUP BY item_id
+       ) rs ON rs.item_id = s.id
        ${where}
        ORDER BY s.created_at DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -85,10 +95,20 @@ const getServiceById = async (req, res) => {
          sc.name AS category_name, sc.slug AS category_slug,
          u.id AS provider_id, u.name AS provider_name,
          u.avatar_url AS provider_avatar, u.phone AS provider_phone,
-         u.location AS provider_location, u.created_at AS provider_since
+         u.location AS provider_location, u.created_at AS provider_since,
+         COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,
+         COALESCE(rs.review_count, 0)::INT AS review_count
        FROM services s
        LEFT JOIN service_categories sc ON s.category_id = sc.id
        LEFT JOIN users u ON s.provider_id = u.id
+       LEFT JOIN (
+         SELECT item_id,
+                AVG(rating)::NUMERIC(3,2) AS avg_rating,
+                COUNT(*)                   AS review_count
+           FROM reviews
+          WHERE item_type = 'service'
+          GROUP BY item_id
+       ) rs ON rs.item_id = s.id
        WHERE s.id = $1`,
       [id]
     );

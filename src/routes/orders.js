@@ -6,6 +6,7 @@ const {
   getMySales,
   getOrderById,
   updateOrderStatus,
+  updateShippingTracking,
 } = require('../controllers/ordersController');
 const authMiddleware            = require('../middleware/auth');
 const { createLimiter }         = require('../middleware/rateLimiter');
@@ -25,7 +26,10 @@ router.get('/sales', getMySales);
 // GET    /orders/:id         — Detalle de una orden
 router.get('/:id', getOrderById);
 
-// PATCH  /orders/:id/status  — Actualizar estado de una orden
+// PATCH  /orders/:id/status    — Actualizar estado de una orden
 router.patch('/:id/status', updateOrderStatus);
+
+// PATCH  /orders/:id/shipping  — Vendedor: cargar tracking + marcar despachado
+router.patch('/:id/shipping', updateShippingTracking);
 
 module.exports = router;
