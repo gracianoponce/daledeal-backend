@@ -1,7 +1,9 @@
 const bcrypt = require('bcryptjs');
 const jwt    = require('jsonwebtoken');
+const crypto = require('crypto');
 const db     = require('../config/database');
 const { validateEmail, validatePassword } = require('../middleware/validate');
+const { sendEmail, passwordResetTemplate } = require('../services/email');
 
 // ============================================================
 // POST /auth/register
@@ -177,6 +179,167 @@ const deactivateAccount = async (req, res) => {
 };
 
 // ============================================================
+// POST /auth/forgot-password
+// Body: { email }
+// Genera un token de reset y lo guarda hasheado en DB.
+// SIEMPRE devuelve 200 (no revelamos si el email existe).
+// El token plano se loggea en consola (placeholder hasta que
+// haya envío de email real). En producción esto va por email.
+// ============================================================
+const forgotPassword = async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email es obligatorio' });
+
+  // Respuesta genérica que SIEMPRE damos, incluso si el email no existe.
+  // Evita que un atacante use este endpoint para enumerar emails registrados.
+  const genericResponse = {
+    message: 'Si el email está registrado, enviamos un link para resetear la contraseña.',
+  };
+
+  try {
+    const userRes = await db.query(
+      'SELECT id, email, name FROM users WHERE email = $1 AND is_active = true',
+      [String(email).toLowerCase().trim()]
+    );
+
+    if (userRes.rows.length === 0) {
+      // Email no existe — devolvemos OK genérico igual.
+      return res.json(genericResponse);
+    }
+
+    const user = userRes.rows[0];
+
+    // Generar token de 32 bytes (64 chars hex). Solo el hash va a la DB.
+    const tokenPlain = crypto.randomBytes(32).toString('hex');
+    const tokenHash  = crypto.createHash('sha256').update(tokenPlain).digest('hex');
+    const expiresAt  = new Date(Date.now() + 60 * 60 * 1000); // 60 min
+
+    // Invalidar tokens anteriores no usados del mismo usuario
+    await db.query(
+      `UPDATE password_reset_tokens
+          SET used_at = NOW()
+        WHERE user_id = $1 AND used_at IS NULL`,
+      [user.id]
+    );
+
+    // Crear el token nuevo
+    await db.query(
+      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, ip_address)
+       VALUES ($1, $2, $3, $4)`,
+      [user.id, tokenHash, expiresAt, req.ip || null]
+    );
+
+    // Construir URL del frontend (multi-origen separado por comas)
+    const frontendBase = (process.env.FRONTEND_URL || 'http://localhost:5500')
+      .split(',').map(s => s.trim()).filter(Boolean)[0] || 'http://localhost:5500';
+    const resetUrl = `${frontendBase}/HTML/recuperar-contrasena.html?token=${tokenPlain}`;
+
+    // Mandar email con el link de reset.
+    // En desarrollo (sin RESEND_API_KEY) loggea a consola para que puedas
+    // copiar el link manualmente. En producción manda email real.
+    const tpl = passwordResetTemplate({ name: user.name, resetUrl });
+    sendEmail({
+      to:      user.email,
+      subject: tpl.subject,
+      html:    tpl.html,
+      text:    tpl.text,
+    }).catch(err => {
+      console.error('[forgotPassword] sendEmail failed:', err.message);
+    });
+
+    res.json(genericResponse);
+  } catch (err) {
+    console.error('Error en forgotPassword:', err);
+    // Devolvemos OK genérico igual — no queremos filtrar errores específicos.
+    res.json(genericResponse);
+  }
+};
+
+// ============================================================
+// POST /auth/reset-password
+// Body: { token, new_password }
+// Valida el token, cambia la contraseña, marca el token como usado.
+// ============================================================
+const resetPassword = async (req, res) => {
+  const { token, new_password } = req.body;
+
+  if (!token || !new_password) {
+    return res.status(400).json({ error: 'Token y nueva contraseña son obligatorios' });
+  }
+
+  const validation = validatePassword(new_password);
+  if (!validation.ok) {
+    return res.status(400).json({ error: validation.message });
+  }
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    const tokenRes = await db.query(
+      `SELECT prt.id, prt.user_id, prt.expires_at, prt.used_at,
+              u.email, u.is_active
+         FROM password_reset_tokens prt
+         JOIN users u ON u.id = prt.user_id
+        WHERE prt.token_hash = $1`,
+      [tokenHash]
+    );
+
+    if (tokenRes.rows.length === 0) {
+      return res.status(400).json({ error: 'Token inválido o ya utilizado' });
+    }
+
+    const t = tokenRes.rows[0];
+
+    if (t.used_at) {
+      return res.status(400).json({ error: 'Este link ya fue utilizado. Solicitá uno nuevo.' });
+    }
+    if (new Date(t.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Este link expiró. Solicitá uno nuevo.' });
+    }
+    if (!t.is_active) {
+      return res.status(403).json({ error: 'La cuenta está inactiva' });
+    }
+
+    // Cambiar contraseña + marcar token usado en una transacción
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const newHash = await bcrypt.hash(new_password, 12);
+      await client.query(
+        'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+        [newHash, t.user_id]
+      );
+
+      await client.query(
+        'UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1',
+        [t.id]
+      );
+
+      // Invalidar todos los demás tokens activos de este usuario por seguridad
+      await client.query(
+        `UPDATE password_reset_tokens
+            SET used_at = NOW()
+          WHERE user_id = $1 AND used_at IS NULL`,
+        [t.user_id]
+      );
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
+
+    res.json({ message: 'Contraseña actualizada. Ya podés iniciar sesión con la nueva.' });
+  } catch (err) {
+    console.error('Error en resetPassword:', err);
+    res.status(500).json({ error: 'Error al cambiar contraseña' });
+  }
+};
+
+// ============================================================
 // Helper: genera JWT
 // ============================================================
 function generateToken(user) {
@@ -187,4 +350,12 @@ function generateToken(user) {
   );
 }
 
-module.exports = { register, login, me, changePassword, deactivateAccount };
+module.exports = {
+  register,
+  login,
+  me,
+  changePassword,
+  deactivateAccount,
+  forgotPassword,
+  resetPassword,
+};
