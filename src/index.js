@@ -1,4 +1,9 @@
 require('dotenv').config();
+
+// Validar env vars críticas antes de cualquier otra cosa.
+// Si falta algo crítico, este process.exit(1) y nadie pierde tiempo.
+require('./config/validateEnv')();
+
 const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
@@ -19,6 +24,9 @@ const ordersRoutes    = require('./routes/orders');
 const reviewsRoutes   = require('./routes/reviews');
 const messagesRoutes  = require('./routes/messages');
 const paymentsRoutes  = require('./routes/payments');
+const adminRoutes     = require('./routes/admin');
+const reportsRoutes   = require('./routes/reports');
+const sitemapRoutes   = require('./routes/sitemap');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -70,6 +78,10 @@ app.use('/orders',    ordersRoutes);
 app.use('/reviews',   reviewsRoutes);
 app.use('/messages',  messagesRoutes);
 app.use('/payments',  paymentsRoutes);
+app.use('/admin',     adminRoutes);
+app.use('/reports',   reportsRoutes);
+// Sitemaps dinámicos (sin prefijo, mounted en root para /sitemap-*.xml)
+app.use('/',          sitemapRoutes);
 
 // ============================================================
 // FRONTEND ESTÁTICO
@@ -79,7 +91,7 @@ app.use('/payments',  paymentsRoutes);
 const frontendPath = path.join(__dirname, '../../..', 'dale-deal-front');
 app.use('/frontend', express.static(frontendPath));
 
-// Ruta raíz — health check
+// Ruta raíz — info de la API
 app.get('/', (req, res) => {
   res.json({
     message: '🟢 Dale Deal API funcionando',
@@ -95,8 +107,32 @@ app.get('/', (req, res) => {
       reviews:   '/reviews',
       messages:  '/messages',
       payments:  '/payments',
+      health:    '/health',
     }
   });
+});
+
+// Health check dedicado para load balancers / uptime monitors.
+// Hace una query trivial a la DB para asegurar conectividad.
+app.get('/health', async (req, res) => {
+  const start = Date.now();
+  try {
+    const db = require('./config/database');
+    await db.query('SELECT 1');
+    res.json({
+      status:    'ok',
+      uptime_s:  Math.round(process.uptime()),
+      latency_ms: Date.now() - start,
+      env:       process.env.NODE_ENV || 'development',
+      version:   '2.0.0',
+    });
+  } catch (err) {
+    res.status(503).json({
+      status:    'error',
+      error:     'database unreachable',
+      latency_ms: Date.now() - start,
+    });
+  }
 });
 
 // ============================================================
