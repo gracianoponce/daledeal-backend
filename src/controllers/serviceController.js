@@ -1,4 +1,82 @@
 const db = require('../config/database');
+const { validateSafeUrl } = require('../middleware/validate');
+
+const ALLOWED_PRICE_TYPES = ['fixed', 'hourly', 'quote'];
+const ALLOWED_CURRENCIES  = ['ARS', 'USD'];
+const MAX_PRICE           = 999_999_999;
+const MAX_IMAGES          = 20;
+const MAX_ZONES           = 50;
+const MAX_TITLE_LEN       = 200;
+const MAX_DESC_LEN        = 5_000;
+const MAX_LOCATION_LEN    = 150;
+
+function num(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+/**
+ * Valida los campos comunes de un servicio. Estricto en CREATE
+ * (title obligatorio), permisivo en UPDATE.
+ */
+function validateServiceFields(b, { mode = 'create' } = {}) {
+  const isCreate = mode === 'create';
+
+  if (b.title !== undefined || isCreate) {
+    if (typeof b.title !== 'string' || b.title.trim().length < 3 || b.title.length > MAX_TITLE_LEN) {
+      return { ok: false, error: `El título debe tener entre 3 y ${MAX_TITLE_LEN} caracteres` };
+    }
+  }
+  if (b.description !== undefined && b.description !== null) {
+    if (typeof b.description !== 'string' || b.description.length > MAX_DESC_LEN) {
+      return { ok: false, error: `La descripción no puede superar los ${MAX_DESC_LEN} caracteres` };
+    }
+  }
+  const pf = num(b.price_from);
+  const pt = num(b.price_to);
+  if (Number.isNaN(pf) || (pf !== null && (pf <= 0 || pf > MAX_PRICE))) {
+    return { ok: false, error: 'price_from debe ser un número mayor a 0' };
+  }
+  if (Number.isNaN(pt) || (pt !== null && (pt <= 0 || pt > MAX_PRICE))) {
+    return { ok: false, error: 'price_to debe ser un número mayor a 0' };
+  }
+  if (pf !== null && pt !== null && pt < pf) {
+    return { ok: false, error: 'price_to no puede ser menor a price_from' };
+  }
+  if (b.currency !== undefined && !ALLOWED_CURRENCIES.includes(b.currency)) {
+    return { ok: false, error: `currency inválida (permitidas: ${ALLOWED_CURRENCIES.join(', ')})` };
+  }
+  if (b.price_type !== undefined && !ALLOWED_PRICE_TYPES.includes(b.price_type)) {
+    return { ok: false, error: `price_type debe ser uno de: ${ALLOWED_PRICE_TYPES.join(', ')}` };
+  }
+  if (b.images !== undefined && b.images !== null) {
+    if (!Array.isArray(b.images) || b.images.length > MAX_IMAGES) {
+      return { ok: false, error: `images debe ser un array de hasta ${MAX_IMAGES} URLs` };
+    }
+    for (const img of b.images) {
+      const v = validateSafeUrl(img);
+      if (!v.ok) return { ok: false, error: 'Una imagen tiene URL inválida' };
+    }
+  }
+  if (b.zones_covered !== undefined && b.zones_covered !== null) {
+    if (!Array.isArray(b.zones_covered) || b.zones_covered.length > MAX_ZONES) {
+      return { ok: false, error: `zones_covered debe ser un array de hasta ${MAX_ZONES} zonas` };
+    }
+  }
+  if (b.location !== undefined && b.location !== null) {
+    if (typeof b.location !== 'string' || b.location.length > MAX_LOCATION_LEN) {
+      return { ok: false, error: `location no puede superar ${MAX_LOCATION_LEN} caracteres` };
+    }
+  }
+  if (b.category_id !== undefined && b.category_id !== null) {
+    const c = parseInt(b.category_id, 10);
+    if (!Number.isInteger(c) || c < 1) {
+      return { ok: false, error: 'category_id inválido' };
+    }
+  }
+  return { ok: true };
+}
 
 // ============================================================
 // GET /services
@@ -84,10 +162,13 @@ const getServices = async (req, res) => {
 // GET /services/:id
 // ============================================================
 const getServiceById = async (req, res) => {
-  const { id } = req.params;
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id < 1) {
+    return res.status(400).json({ error: 'id inválido' });
+  }
 
   try {
-    await db.query('UPDATE services SET views = views + 1 WHERE id = $1', [id]);
+    db.query('UPDATE services SET views = views + 1 WHERE id = $1', [id]).catch(() => {});
 
     const result = await db.query(
       `SELECT
@@ -138,6 +219,10 @@ const createService = async (req, res) => {
     return res.status(400).json({ error: 'El título es obligatorio' });
   }
 
+  // Validar tipos y rangos
+  const v = validateServiceFields(req.body, { mode: 'create' });
+  if (!v.ok) return res.status(400).json({ error: v.error });
+
   try {
     const result = await db.query(
       `INSERT INTO services
@@ -170,6 +255,9 @@ const updateService = async (req, res) => {
     const check = await db.query('SELECT provider_id FROM services WHERE id = $1', [id]);
     if (check.rows.length === 0) return res.status(404).json({ error: 'Servicio no encontrado' });
     if (check.rows[0].provider_id !== req.user.id) return res.status(403).json({ error: 'No tenés permiso para editar este servicio' });
+
+    const v = validateServiceFields(req.body, { mode: 'update' });
+    if (!v.ok) return res.status(400).json({ error: v.error });
 
     const result = await db.query(
       `UPDATE services SET

@@ -1,4 +1,5 @@
 const db = require('../config/database');
+const { validateSafeUrl, PHONE_REGEX } = require('../middleware/validate');
 
 // ============================================================
 // GET /users/:id   - Perfil público
@@ -50,6 +51,28 @@ const getUserById = async (req, res) => {
 // ============================================================
 const updateProfile = async (req, res) => {
   const { name, phone, location, avatar_url } = req.body;
+
+  // Validaciones de tipo / rango / seguridad
+  if (name !== undefined && name !== null) {
+    if (typeof name !== 'string' || name.trim().length < 2 || name.length > 100) {
+      return res.status(400).json({ error: 'El nombre debe tener entre 2 y 100 caracteres' });
+    }
+  }
+  if (phone !== undefined && phone !== null && phone !== '') {
+    if (typeof phone !== 'string' || !PHONE_REGEX.test(phone)) {
+      return res.status(400).json({ error: 'Teléfono inválido' });
+    }
+  }
+  if (location !== undefined && location !== null) {
+    if (typeof location !== 'string' || location.length > 150) {
+      return res.status(400).json({ error: 'location no puede superar 150 caracteres' });
+    }
+  }
+  // avatar_url: rechazar javascript:, data:, etc. — sino sería XSS al renderizar
+  if (avatar_url !== undefined && avatar_url !== null && avatar_url !== '') {
+    const v = validateSafeUrl(avatar_url);
+    if (!v.ok) return res.status(400).json({ error: 'URL de avatar inválida' });
+  }
 
   try {
     const result = await db.query(

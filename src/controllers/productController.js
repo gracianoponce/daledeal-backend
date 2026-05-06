@@ -1,5 +1,78 @@
 const db = require('../config/database');
-const { parsePagination, parseSortOrder } = require('../middleware/validate');
+const { parsePagination, parseSortOrder, validateSafeUrl } = require('../middleware/validate');
+
+const ALLOWED_CONDITIONS = ['new', 'used'];
+const ALLOWED_CURRENCIES = ['ARS', 'USD'];
+const MAX_PRICE          = 999_999_999;     // 999M (cubre cualquier producto razonable)
+const MAX_STOCK          = 100_000;
+const MAX_IMAGES         = 20;
+const MAX_TITLE_LEN      = 200;
+const MAX_DESC_LEN       = 5_000;
+const MAX_LOCATION_LEN   = 150;
+
+/**
+ * Valida los campos comunes de un producto al crear/editar.
+ * Devuelve { ok:true } o { ok:false, error }.
+ *
+ * Estricto en CREATE (todos obligatorios), permisivo en UPDATE
+ * (solo valida si el campo viene definido).
+ */
+function validateProductFields(b, { mode = 'create' } = {}) {
+  const isCreate = mode === 'create';
+
+  if (b.title !== undefined || isCreate) {
+    if (typeof b.title !== 'string' || b.title.trim().length < 3 || b.title.length > MAX_TITLE_LEN) {
+      return { ok: false, error: `El título debe tener entre 3 y ${MAX_TITLE_LEN} caracteres` };
+    }
+  }
+  if (b.description !== undefined && b.description !== null) {
+    if (typeof b.description !== 'string' || b.description.length > MAX_DESC_LEN) {
+      return { ok: false, error: `La descripción no puede superar los ${MAX_DESC_LEN} caracteres` };
+    }
+  }
+  if (b.price !== undefined || isCreate) {
+    const p = parseFloat(b.price);
+    if (!Number.isFinite(p) || p <= 0 || p > MAX_PRICE) {
+      return { ok: false, error: 'El precio debe ser un número mayor a 0' };
+    }
+  }
+  if (b.currency !== undefined && !ALLOWED_CURRENCIES.includes(b.currency)) {
+    return { ok: false, error: `currency inválida (permitidas: ${ALLOWED_CURRENCIES.join(', ')})` };
+  }
+  if (b.stock !== undefined) {
+    const s = parseInt(b.stock, 10);
+    if (!Number.isInteger(s) || s < 0 || s > MAX_STOCK) {
+      return { ok: false, error: `stock debe ser un entero entre 0 y ${MAX_STOCK}` };
+    }
+  }
+  if (b.condition !== undefined && !ALLOWED_CONDITIONS.includes(b.condition)) {
+    return { ok: false, error: `condition debe ser uno de: ${ALLOWED_CONDITIONS.join(', ')}` };
+  }
+  if (b.images !== undefined && b.images !== null) {
+    if (!Array.isArray(b.images)) {
+      return { ok: false, error: 'images debe ser un array de URLs' };
+    }
+    if (b.images.length > MAX_IMAGES) {
+      return { ok: false, error: `Máximo ${MAX_IMAGES} imágenes por publicación` };
+    }
+    for (const img of b.images) {
+      const v = validateSafeUrl(img);
+      if (!v.ok) return { ok: false, error: 'Una imagen tiene URL inválida' };
+    }
+  }
+  if (b.location !== undefined && b.location !== null) {
+    if (typeof b.location !== 'string' || b.location.length > MAX_LOCATION_LEN) {
+      return { ok: false, error: `location no puede superar ${MAX_LOCATION_LEN} caracteres` };
+    }
+  }
+  if (b.category_id !== undefined && b.category_id !== null) {
+    const c = parseInt(b.category_id, 10);
+    if (!Number.isInteger(c) || c < 1) {
+      return { ok: false, error: 'category_id inválido' };
+    }
+  }
+  return { ok: true };
+}
 
 // ------------------------------------------------------------
 // Helper: valida y normaliza los campos de envío que llegan
@@ -115,16 +188,25 @@ const getProducts = async (req, res) => {
     conditions.push(`(p.title ILIKE $${params.length} OR p.description ILIKE $${params.length})`);
   }
   if (min_price) {
-    params.push(parseFloat(min_price));
-    conditions.push(`p.price >= $${params.length}`);
+    const mp = parseFloat(min_price);
+    if (Number.isFinite(mp) && mp >= 0) {
+      params.push(mp);
+      conditions.push(`p.price >= $${params.length}`);
+    }
   }
   if (max_price) {
-    params.push(parseFloat(max_price));
-    conditions.push(`p.price <= $${params.length}`);
+    const mp = parseFloat(max_price);
+    if (Number.isFinite(mp) && mp >= 0) {
+      params.push(mp);
+      conditions.push(`p.price <= $${params.length}`);
+    }
   }
   if (seller_id) {
-    params.push(parseInt(seller_id));
-    conditions.push(`p.seller_id = $${params.length}`);
+    const sid = parseInt(seller_id, 10);
+    if (Number.isInteger(sid) && sid > 0) {
+      params.push(sid);
+      conditions.push(`p.seller_id = $${params.length}`);
+    }
   }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
@@ -185,11 +267,14 @@ const getProducts = async (req, res) => {
 // GET /products/:id
 // ============================================================
 const getProductById = async (req, res) => {
-  const { id } = req.params;
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id < 1) {
+    return res.status(400).json({ error: 'id inválido' });
+  }
 
   try {
-    // Incrementar vistas
-    await db.query('UPDATE products SET views = views + 1 WHERE id = $1', [id]);
+    // Incrementar vistas (no crítico — si falla, seguimos)
+    db.query('UPDATE products SET views = views + 1 WHERE id = $1', [id]).catch(() => {});
 
     const result = await db.query(
       `SELECT
@@ -243,6 +328,10 @@ const createProduct = async (req, res) => {
     return res.status(400).json({ error: 'Título y precio son obligatorios' });
   }
 
+  // Validar tipos de los campos comunes (precio, stock, condition, urls, etc.)
+  const v = validateProductFields(req.body, { mode: 'create' });
+  if (!v.ok) return res.status(400).json({ error: v.error });
+
   // Normalizar y validar opciones de envío
   const ship = normalizeShippingFields({
     shipping_required, offers_delivery, offers_pickup,
@@ -294,6 +383,10 @@ const updateProduct = async (req, res) => {
     const check = await db.query('SELECT seller_id FROM products WHERE id = $1', [id]);
     if (check.rows.length === 0) return res.status(404).json({ error: 'Producto no encontrado' });
     if (check.rows[0].seller_id !== req.user.id) return res.status(403).json({ error: 'No tenés permiso para editar este producto' });
+
+    // Validar tipos de los campos enviados (cualquier subset)
+    const v = validateProductFields(req.body, { mode: 'update' });
+    if (!v.ok) return res.status(400).json({ error: v.error });
 
     // ¿El cliente está modificando la configuración de envío?
     const touchingShipping = shipping_required !== undefined;

@@ -6,7 +6,8 @@
 
 const EMAIL_REGEX   = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX   = /^[\d\s\+\-\(\)]{6,20}$/;
-const URL_REGEX     = /^https?:\/\/.+/;
+const URL_REGEX     = /^https?:\/\/.+/i;
+const SAFE_URL_REGEX = /^https?:\/\/[^\s<>"']+$/i;
 
 /**
  * Sanitiza un string: elimina HTML/scripts, trim, normaliza espacios.
@@ -43,6 +44,24 @@ function validatePassword(password) {
 function validateEmail(email) {
   if (!email || !EMAIL_REGEX.test(email)) {
     return { ok: false, message: 'Email inválido' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Valida que una URL sea http(s) y NO use schemes peligrosos
+ * (javascript:, data:, file:, vbscript:). Importante para campos
+ * que terminan en `<img src>` o `<a href>` del frontend.
+ */
+function validateSafeUrl(url) {
+  if (!url) return { ok: true }; // opcional → ok
+  const s = String(url).trim();
+  // Rechazar explícitamente schemes peligrosos antes del regex
+  if (/^\s*(javascript|data|vbscript|file):/i.test(s)) {
+    return { ok: false, message: 'URL inválida' };
+  }
+  if (!SAFE_URL_REGEX.test(s) || s.length > 500) {
+    return { ok: false, message: 'URL inválida' };
   }
   return { ok: true };
 }
@@ -87,10 +106,11 @@ module.exports = {
   sanitizeBody,
   validatePassword,
   validateEmail,
-  validateEmail,
+  validateSafeUrl,
   parsePagination,
   parseSortOrder,
   EMAIL_REGEX,
   PHONE_REGEX,
   URL_REGEX,
+  SAFE_URL_REGEX,
 };
