@@ -72,6 +72,14 @@ function validateEnv() {
         desc: 'En producción estás usando un token TEST de Mercado Pago. Cambialo por el de PRD.',
       });
     }
+    // En prod, MP_WEBHOOK_SECRET es OBLIGATORIO. Sin esto, cualquiera con
+    // la URL del webhook podría marcar órdenes como pagadas.
+    if (!process.env.MP_WEBHOOK_SECRET || String(process.env.MP_WEBHOOK_SECRET).trim() === '') {
+      missing.push({
+        name: 'MP_WEBHOOK_SECRET',
+        desc: 'En producción es obligatorio para validar la firma del webhook de MP. Sacalo del panel de developers MP > Webhooks.',
+      });
+    }
   }
 
   if (warnings.length > 0) {

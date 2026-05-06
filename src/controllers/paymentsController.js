@@ -20,6 +20,7 @@ const {
   sendEmail,
   orderPaidBuyerTemplate,
   newSaleSellerTemplate,
+  paymentFailedBuyerTemplate,
 } = require('../services/email');
 
 const COMMISSION_RATE = parseFloat(process.env.MARKETPLACE_COMMISSION_RATE || '0.05');
@@ -66,8 +67,15 @@ function paymentToOrderStatus(paymentStatus, current) {
 function verifyWebhookSignature(req) {
   const secret = process.env.MP_WEBHOOK_SECRET;
   if (!secret) {
-    // Si no hay secret configurado, aceptamos sin validar (útil en dev)
-    console.warn('[mp-webhook] MP_WEBHOOK_SECRET no configurado — aceptando sin validar');
+    // Sin secret configurado:
+    //   - en dev → aceptamos sin validar (útil para testing local)
+    //   - en prod → rechazamos. validateEnv ya alerta al boot, pero
+    //     este fallback evita que cualquiera marque órdenes como pagas.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[mp-webhook] MP_WEBHOOK_SECRET no configurado en prod — RECHAZANDO');
+      return false;
+    }
+    console.warn('[mp-webhook] MP_WEBHOOK_SECRET no configurado — aceptando sin validar (dev)');
     return true;
   }
 
@@ -142,6 +150,13 @@ const createPreference = async (req, res) => {
 
     if (order.payment_status === 'paid') {
       return res.status(400).json({ error: 'Esta orden ya fue pagada' });
+    }
+    // No permitir reabrir el pago si la orden está en estado terminal
+    if (['refunded', 'charged_back'].includes(order.payment_status)) {
+      return res.status(400).json({ error: 'Esta orden ya fue reembolsada y no se puede reabrir' });
+    }
+    if (order.status === 'cancelled') {
+      return res.status(400).json({ error: 'Esta orden está cancelada' });
     }
 
     // Si ya existe preferencia, la devolvemos (idempotencia del lado nuestro)
@@ -281,6 +296,34 @@ const handleWebhook = async (req, res) => {
     const topic          = req.query.topic || req.query.type || req.body?.type;
     const dataId         = req.query['data.id'] || req.body?.data?.id;
 
+    // Si la firma es inválida — registramos para auditoría y abortamos.
+    // Sin esto, un atacante con la URL del webhook podría marcar
+    // órdenes como pagas mandando JSON falso.
+    if (signatureValid === false) {
+      console.error('[mp-webhook] Firma inválida — RECHAZANDO', { requestId, dataId });
+      try {
+        await db.query(
+          `INSERT INTO payment_events
+             (mp_payment_id, mp_topic, mp_action, status, status_detail,
+              raw_payload, signature_valid, request_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (request_id) DO NOTHING`,
+          [
+            dataId ? String(dataId) : null,
+            topic || 'unknown',
+            'rejected:invalid_signature',
+            'rejected', 'invalid_signature',
+            JSON.stringify({ headers: req.headers, query: req.query, body: req.body }),
+            false,
+            requestId,
+          ]
+        );
+      } catch (e) {
+        // si la tabla todavía no existe (eg. en dev) no bloqueamos
+      }
+      return;
+    }
+
     // Idempotencia: si ya procesamos este request_id, salir
     if (requestId) {
       const dupe = await db.query(
@@ -330,6 +373,23 @@ const handleWebhook = async (req, res) => {
     }
 
     const order = orderRes.rows[0];
+
+    // Defensa contra suplantación: si el payment trae metadata, debe coincidir
+    // con la orden que encontramos. Sin esto, un atacante podría crear
+    // su propia preferencia con un external_reference que matchee otra orden.
+    const meta = mpPayment.metadata || {};
+    if (meta.order_id != null && Number(meta.order_id) !== Number(order.id)) {
+      console.error('[mp-webhook] metadata.order_id no matchea', {
+        meta_order_id: meta.order_id, order_id: order.id, externalRef,
+      });
+      return;
+    }
+    if (meta.buyer_id != null && Number(meta.buyer_id) !== Number(order.buyer_id)) {
+      console.error('[mp-webhook] metadata.buyer_id no matchea', {
+        meta_buyer_id: meta.buyer_id, order_buyer_id: order.buyer_id, externalRef,
+      });
+      return;
+    }
 
     // Actualizamos orden (transaccional con el log)
     const client2 = await db.pool.connect();
@@ -400,6 +460,13 @@ const handleWebhook = async (req, res) => {
           console.error('[mp-webhook] sendOrderPaidEmails error:', err.message)
         );
       }
+      // Si el pago fue rechazado o cancelado por MP, avisamos al comprador
+      // (rapipago vencido, fondos insuficientes, 3DS rechazado, etc.).
+      if (newStatus === 'rejected' || newStatus === 'cancelled') {
+        sendPaymentFailedEmail(order.id, mpPayment.status_detail).catch(err =>
+          console.error('[mp-webhook] sendPaymentFailedEmail error:', err.message)
+        );
+      }
     } catch (txErr) {
       await client2.query('ROLLBACK');
       throw txErr;
@@ -461,6 +528,31 @@ async function sendOrderPaidEmails(orderId) {
     sendEmail({ to: o.seller_email, subject: tpl.subject, html: tpl.html, text: tpl.text })
       .catch(e => console.error('[email] seller notify failed:', e.message));
   }
+}
+
+// ============================================================
+// Helper: dispara email "no pudimos cobrar tu pago" al comprador.
+// ============================================================
+async function sendPaymentFailedEmail(orderId, statusDetail) {
+  const r = await db.query(
+    `SELECT o.id, p.title AS product_title,
+            ub.email AS buyer_email, ub.name AS buyer_name
+       FROM orders o
+       LEFT JOIN products p ON p.id = o.product_id
+       LEFT JOIN users ub   ON ub.id = o.buyer_id
+      WHERE o.id = $1`,
+    [orderId]
+  );
+  if (r.rows.length === 0) return;
+  const o = r.rows[0];
+  if (!o.buyer_email) return;
+  const tpl = paymentFailedBuyerTemplate({
+    buyerName:    o.buyer_name,
+    orderId:      o.id,
+    productTitle: o.product_title,
+    reason:       statusDetail || null,
+  });
+  await sendEmail({ to: o.buyer_email, subject: tpl.subject, html: tpl.html, text: tpl.text });
 }
 
 // ============================================================

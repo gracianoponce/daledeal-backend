@@ -42,13 +42,19 @@ app.use(securityHeaders);
 app.use(logger);
 
 // 3. CORS
-// En dev aceptamos cualquier origen incluyendo file:// (que manda null como origin)
+// Solo abrimos completamente si NODE_ENV es EXPLÍCITAMENTE 'development'.
+// Si NODE_ENV está vacío, mal seteado o = 'production' → aplicamos whitelist.
+const IS_DEV = process.env.NODE_ENV === 'development';
+const normalizeOrigin = u => String(u || '').trim().toLowerCase().replace(/\/+$/, '');
 app.use(cors({
   origin: (origin, callback) => {
-    // Permitir requests sin origin (Postman, curl) y file:// (origin = null)
-    if (!origin || process.env.NODE_ENV === 'development') return callback(null, true);
-    const allowed = (process.env.FRONTEND_URL || '').split(',').map(u => u.trim());
-    if (allowed.includes('*') || allowed.includes(origin)) return callback(null, true);
+    // Permitir requests sin origin (Postman, curl, mismo-origin) y file:// (origin = null)
+    if (!origin) return callback(null, true);
+    if (IS_DEV)  return callback(null, true);
+    const allowed = (process.env.FRONTEND_URL || '')
+      .split(',').map(normalizeOrigin).filter(Boolean);
+    const o = normalizeOrigin(origin);
+    if (allowed.includes('*') || allowed.includes(o)) return callback(null, true);
     callback(new Error(`CORS: origen no permitido — ${origin}`));
   },
   methods:        ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
@@ -64,7 +70,10 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(sanitizeBody);
 
 // 6. Rate limiting global
-app.use('/api', apiLimiter);
+// Las rutas reales NO tienen prefijo /api (montamos /auth, /products, etc.),
+// así que aplicamos el limiter a todo. Los limiters más estrictos
+// (authLimiter, etc.) se siguen montando dentro de cada ruta.
+app.use(apiLimiter);
 
 // ============================================================
 // RUTAS
@@ -114,11 +123,14 @@ app.get('/', (req, res) => {
 
 // Health check dedicado para load balancers / uptime monitors.
 // Hace una query trivial a la DB para asegurar conectividad.
+// En prod devolvemos lo mínimo (no exponer env/version es buena higiene).
 app.get('/health', async (req, res) => {
   const start = Date.now();
+  const isProd = process.env.NODE_ENV === 'production';
   try {
     const db = require('./config/database');
     await db.query('SELECT 1');
+    if (isProd) return res.json({ status: 'ok' });
     res.json({
       status:    'ok',
       uptime_s:  Math.round(process.uptime()),
@@ -127,11 +139,7 @@ app.get('/health', async (req, res) => {
       version:   '2.0.0',
     });
   } catch (err) {
-    res.status(503).json({
-      status:    'error',
-      error:     'database unreachable',
-      latency_ms: Date.now() - start,
-    });
+    res.status(503).json({ status: 'error' });
   }
 });
 
