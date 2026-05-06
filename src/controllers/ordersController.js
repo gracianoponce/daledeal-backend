@@ -113,11 +113,12 @@ const createOrder = async (req, res) => {
     notes,
   } = req.body;
 
-  if (!product_id) {
-    return res.status(400).json({ error: 'product_id es obligatorio' });
+  if (!product_id || !Number.isInteger(parseInt(product_id, 10))) {
+    return res.status(400).json({ error: 'product_id es obligatorio y debe ser numérico' });
   }
-  if (quantity < 1) {
-    return res.status(400).json({ error: 'La cantidad debe ser mayor a 0' });
+  const qty = parseInt(quantity, 10);
+  if (!Number.isInteger(qty) || qty < 1 || qty > 999) {
+    return res.status(400).json({ error: 'La cantidad debe ser un entero entre 1 y 999' });
   }
 
   try {
@@ -139,7 +140,7 @@ const createOrder = async (req, res) => {
     if (product.status !== 'active') {
       return res.status(400).json({ error: 'El producto no está disponible' });
     }
-    if (product.stock < quantity) {
+    if (product.stock < qty) {
       return res.status(400).json({
         error:     'Stock insuficiente',
         available: product.stock,
@@ -157,13 +158,32 @@ const createOrder = async (req, res) => {
     const s = shipping.fields;
 
     // Total = (precio producto × qty) + costo envío
-    const subtotal    = parseFloat(product.price) * quantity;
+    const subtotal    = parseFloat(product.price) * qty;
     const total_price = subtotal + s.shipping_cost;
 
     // Crear la orden dentro de una transacción
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
+
+      // Descontar stock de forma ATÓMICA: solo afecta la fila si el stock
+      // todavía alcanza. Si dos compras concurrentes llegan, una de las dos
+      // verá 0 filas afectadas y la abortamos. Esto previene stock negativo.
+      const stockUpdate = await client.query(
+        `UPDATE products
+            SET stock  = stock - $1,
+                status = CASE WHEN stock - $1 = 0 THEN 'sold' ELSE status END,
+                updated_at = NOW()
+          WHERE id = $2 AND stock >= $1 AND status = 'active'
+          RETURNING stock`,
+        [qty, product_id]
+      );
+      if (stockUpdate.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          error: 'Stock insuficiente o producto no disponible. Otra compra te ganó de mano.',
+        });
+      }
 
       const orderResult = await client.query(
         `INSERT INTO orders
@@ -176,7 +196,7 @@ const createOrder = async (req, res) => {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
          RETURNING *`,
         [
-          req.user.id, product.seller_id, product_id, quantity,
+          req.user.id, product.seller_id, product_id, qty,
           product.price, total_price, product.currency,
           payment_method, notes || null,
           s.shipping_method, s.shipping_cost,
@@ -185,20 +205,6 @@ const createOrder = async (req, res) => {
           s.postal_code, s.notes,
         ]
       );
-
-      // Descontar stock
-      await client.query(
-        'UPDATE products SET stock = stock - $1 WHERE id = $2',
-        [quantity, product_id]
-      );
-
-      // Si se agota, cambiar status a 'sold'
-      if (product.stock - quantity === 0) {
-        await client.query(
-          "UPDATE products SET status = 'sold' WHERE id = $1",
-          [product_id]
-        );
-      }
 
       // Crear o recuperar la conversación buyer ↔ seller
       // (dentro de la misma transacción para que no queden órdenes huérfanas)
@@ -402,14 +408,50 @@ const updateOrderStatus = async (req, res) => {
       return res.status(403).json({ error: 'No tenés permiso para cambiar el estado' });
     }
 
-    // Si se cancela, devolver stock
-    if (status === 'cancelled' && order.status !== 'cancelled') {
-      await db.query(
-        `UPDATE products SET stock = stock + $1,
-           status = CASE WHEN status = 'sold' THEN 'active' ELSE status END
-         WHERE id = $2`,
-        [order.quantity, order.product_id]
-      );
+    // Cancelación: hacemos el cambio de estado y la devolución de stock
+    // dentro de una transacción atómica. El UPDATE … WHERE status<>'cancelled'
+    // RETURNING garantiza que el stock se devuelve EXACTAMENTE una vez,
+    // aunque lleguen dos cancelaciones concurrentes.
+    if (status === 'cancelled') {
+      const txClient = await db.pool.connect();
+      try {
+        await txClient.query('BEGIN');
+
+        const cancelRes = await txClient.query(
+          `UPDATE orders
+              SET status = 'cancelled', updated_at = NOW()
+            WHERE id = $1 AND status <> 'cancelled'
+            RETURNING quantity, product_id`,
+          [id]
+        );
+
+        if (cancelRes.rowCount === 0) {
+          await txClient.query('ROLLBACK');
+          // ya estaba cancelada — devolvemos la orden tal cual está
+          const cur = await db.query('SELECT * FROM orders WHERE id = $1', [id]);
+          return res.json({ message: 'La orden ya estaba cancelada', order: cur.rows[0] });
+        }
+
+        const cancelled = cancelRes.rows[0];
+        await txClient.query(
+          `UPDATE products
+              SET stock  = stock + $1,
+                  status = CASE WHEN status = 'sold' THEN 'active' ELSE status END,
+                  updated_at = NOW()
+            WHERE id = $2`,
+          [cancelled.quantity, cancelled.product_id]
+        );
+
+        const orderRes = await txClient.query('SELECT * FROM orders WHERE id = $1', [id]);
+        await txClient.query('COMMIT');
+
+        return res.json({ message: 'Estado actualizado', order: orderRes.rows[0] });
+      } catch (txErr) {
+        await txClient.query('ROLLBACK');
+        throw txErr;
+      } finally {
+        txClient.release();
+      }
     }
 
     // Marcar timestamps del envío automáticamente
