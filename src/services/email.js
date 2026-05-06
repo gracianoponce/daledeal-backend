@@ -226,6 +226,25 @@ function newSaleSellerTemplate({ sellerName, orderId, productTitle, buyerName, t
   };
 }
 
+function paymentFailedBuyerTemplate({ buyerName, orderId, productTitle, reason }) {
+  const reasonText = reason
+    ? `<p style="font-size:13px;color:#6b7280;">Motivo informado por Mercado Pago: <strong>${escapeHtml(reason)}</strong>.</p>`
+    : '';
+  const inner = `
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">No pudimos cobrar tu pago</h2>
+    <p>Hola${buyerName ? ' ' + escapeHtml(buyerName) : ''},</p>
+    <p>El pago de tu orden <strong>#${orderId}</strong> (${escapeHtml(productTitle || 'tu compra')}) no se pudo completar y por ahora no fue acreditado.</p>
+    ${reasonText}
+    <p>Podés volver a intentarlo desde "Mis compras". Si seguís con problemas, escribinos por chat o desde reportar un problema.</p>
+    <p style="text-align:center;margin:28px 0;">${btn('Reintentar pago', 'https://daledeal.com.ar/HTML/notificaciones.html#mis-compras')}</p>
+  `;
+  return {
+    subject: `No pudimos cobrar tu pago · Orden #${orderId}`,
+    html:    emailWrap(inner, { title: 'Pago rechazado' }),
+    text:    `No pudimos cobrar tu pago de la orden #${orderId}.${reason ? ' Motivo: ' + reason + '.' : ''}\nReintentá desde: https://daledeal.com.ar/HTML/notificaciones.html#mis-compras`,
+  };
+}
+
 function orderShippedBuyerTemplate({ buyerName, orderId, productTitle, trackingNumber, sellerName }) {
   const inner = `
     <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">📦 Tu pedido fue despachado</h2>
@@ -271,4 +290,5 @@ module.exports = {
   orderPaidBuyerTemplate,
   newSaleSellerTemplate,
   orderShippedBuyerTemplate,
+  paymentFailedBuyerTemplate,
 };

@@ -3,6 +3,8 @@ const db = require('../config/database');
 const VALID_CATEGORIES = [
   'technical', 'payment', 'content', 'fraud',
   'account', 'shipping', 'other',
+  // Compliance Argentina (Resolución 424/2020 SCI):
+  'arrepentimiento',
 ];
 
 // ============================================================
