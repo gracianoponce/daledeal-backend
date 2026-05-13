@@ -169,7 +169,7 @@ INSERT INTO products (seller_id, category_id, title, description, price, currenc
   'ARS',
   'used',
   1,
-  ARRAY['https://images.unsplash.com/photo-1607853202273-232359d85f98?w=600'],
+  ARRAY['https://images.unsplash.com/photo-1606813907291-d86efa9b94db?w=600'],
   'Salta Capital',
   'active'
 ),
@@ -181,7 +181,7 @@ INSERT INTO products (seller_id, category_id, title, description, price, currenc
   'ARS',
   'used',
   1,
-  ARRAY['https://images.unsplash.com/photo-1588423771073-b8903febb85d?w=600'],
+  ARRAY['https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=600'],
   'Buenos Aires, CABA',
   'active'
 ),
@@ -281,7 +281,7 @@ INSERT INTO products (seller_id, category_id, title, description, price, currenc
   'ARS',
   'used',
   1,
-  ARRAY['https://images.unsplash.com/photo-1584990347449-a2d4c2c044c9?w=600'],
+  ARRAY['https://images.unsplash.com/photo-1593359677879-a4bb92f829d1?w=600'],
   'Mendoza Capital',
   'active'
 ),
@@ -307,7 +307,7 @@ INSERT INTO products (seller_id, category_id, title, description, price, currenc
   'ARS',
   'used',
   1,
-  ARRAY['https://images.unsplash.com/photo-1558618047-f4e80e7a70b7?w=600'],
+  ARRAY['https://images.unsplash.com/photo-1576435728678-68d0fbf94e91?w=600'],
   'Buenos Aires, CABA',
   'active'
 ),
@@ -357,7 +357,7 @@ INSERT INTO products (seller_id, category_id, title, description, price, currenc
   'ARS',
   'used',
   1,
-  ARRAY['https://images.unsplash.com/photo-1558618047-f4e80e7a70b7?w=600'],
+  ARRAY['https://images.unsplash.com/photo-1601758228041-f3b2795255f1?w=600'],
   'Salta Capital',
   'active'
 ),
@@ -421,7 +421,7 @@ INSERT INTO products (seller_id, category_id, title, description, price, currenc
   'ARS',
   'used',
   1,
-  ARRAY['https://images.unsplash.com/photo-1527443224154-c4a573d93888?w=600'],
+  ARRAY['https://images.unsplash.com/photo-1551816230-ef5deaed4a26?w=600'],
   'Salta Capital',
   'active'
 ),
@@ -604,7 +604,7 @@ INSERT INTO services (provider_id, category_id, title, description, price_from, 
   'Carpintero - muebles a medida y reparaciones',
   'Fabricación de muebles a medida: cocinas, placares, bibliotecas, escritorios. Reparación de muebles. Materiales de primera calidad. Diseño a gusto del cliente. Presupuesto sin cargo.',
   20000, 150000, 'quote',
-  ARRAY['https://images.unsplash.com/photo-1416362108990-e0a00ba8a964?w=600'],
+  ARRAY['https://images.unsplash.com/photo-1500099817043-86d46000d58f?w=600'],
   'Salta Capital',
   ARRAY['Salta Capital', 'alrededores'],
   'active'
