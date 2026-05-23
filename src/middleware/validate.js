@@ -10,14 +10,24 @@ const URL_REGEX     = /^https?:\/\/.+/i;
 const SAFE_URL_REGEX = /^https?:\/\/[^\s<>"']+$/i;
 
 /**
- * Sanitiza un string: elimina HTML/scripts, trim, normaliza espacios.
+ * Sanitiza un string: escapa HTML, trim, normaliza espacios.
+ *
+ * Escapamos los 5 caracteres especiales de HTML (no solo < y >) para evitar
+ * XSS por inyección en ATRIBUTOS. Ejemplo: si el frontend hace
+ *   <img alt="${product.title}">
+ * y un vendedor pone su título como  iPhone" onerror="alert(1)
+ * sin escapar las " se rompe el atributo y se ejecuta el handler. Escapar
+ * &, ', " junto con <, > cierra todos los vectores XSS comunes.
  */
 function sanitize(str) {
   if (typeof str !== 'string') return str;
   return str
     .trim()
+    .replace(/&/g, '&amp;')   // primero & para no doble-escapar
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
     .replace(/\s+/g, ' ');
 }
 
