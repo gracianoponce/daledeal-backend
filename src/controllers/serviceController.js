@@ -1,5 +1,5 @@
 const db = require('../config/database');
-const { validateSafeUrl } = require('../middleware/validate');
+const { validateSafeUrl, parsePagination } = require('../middleware/validate');
 
 const ALLOWED_PRICE_TYPES = ['fixed', 'hourly', 'quote'];
 const ALLOWED_CURRENCIES  = ['ARS', 'USD'];
@@ -87,11 +87,11 @@ const getServices = async (req, res) => {
     category,
     search,
     location,
-    page  = 1,
-    limit = 20
   } = req.query;
 
-  const offset = (page - 1) * limit;
+  // parsePagination: clamping seguro (page ≥ 1, limit ≤ 100). Sin esto un
+  // atacante podía pedir ?limit=999999 y mandar la DB al diablo.
+  const { page, limit, offset } = parsePagination(req.query);
   const params = [];
   const conditions = ["s.status = 'active'"];
 

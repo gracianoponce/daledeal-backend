@@ -1,6 +1,7 @@
 const db = require('../config/database');
 const { findOrCreateConversation } = require('./messageController');
 const { sendEmail, orderShippedBuyerTemplate } = require('../services/email');
+const { parsePagination } = require('../middleware/validate');
 
 // ============================================================
 // Helper: valida los datos de envío que vienen al crear la orden
@@ -248,8 +249,9 @@ const createOrder = async (req, res) => {
 // Mis compras (como comprador)
 // ============================================================
 const getMyOrders = async (req, res) => {
-  const { status, page = 1, limit = 10 } = req.query;
-  const offset = (page - 1) * limit;
+  const { status } = req.query;
+  // parsePagination: clamping seguro (page ≥ 1, limit ≤ 100).
+  const { page, limit, offset } = parsePagination(req.query);
   const params = [req.user.id];
   let whereExtra = '';
 
@@ -293,8 +295,9 @@ const getMyOrders = async (req, res) => {
 // Mis ventas (como vendedor)
 // ============================================================
 const getMySales = async (req, res) => {
-  const { status, page = 1, limit = 10 } = req.query;
-  const offset = (page - 1) * limit;
+  const { status } = req.query;
+  // parsePagination: clamping seguro (page ≥ 1, limit ≤ 100).
+  const { page, limit, offset } = parsePagination(req.query);
   const params = [req.user.id];
   let whereExtra = '';
 
