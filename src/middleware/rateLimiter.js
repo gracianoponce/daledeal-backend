@@ -86,4 +86,12 @@ module.exports = {
     max: 30,
     message: 'Límite de publicaciones alcanzado. Intentá en 1 hora.'
   }),
+
+  // ⚠️ Solo para tests — los smoke tests corren todas las requests desde
+  // 127.0.0.1, así que sin reset entre describes el limiter se activa y
+  // los tests terminan probando "429" en lugar del controller real.
+  // No exportar este método en código de producción que NO sea tests.
+  _resetStoreForTests() {
+    store.clear();
+  },
 };
