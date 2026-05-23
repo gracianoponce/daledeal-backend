@@ -173,8 +173,15 @@ app.use((err, req, res, next) => {
 // ============================================================
 // INICIAR SERVIDOR
 // ============================================================
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor Dale Deal v2.0 corriendo en http://localhost:${PORT}`);
-  console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔒 Rate limiting, security headers y logging activos`);
-});
+// El listen solo corre si este archivo se ejecuta directo (npm start).
+// Cuando los tests con supertest hacen require('./index'), reciben el app
+// configurado pero sin abrir el puerto (cada test maneja su propia instancia).
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Servidor Dale Deal v2.0 corriendo en http://localhost:${PORT}`);
+    console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔒 Rate limiting, security headers y logging activos`);
+  });
+}
+
+module.exports = app;

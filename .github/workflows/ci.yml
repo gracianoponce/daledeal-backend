@@ -1,0 +1,85 @@
+name: CI
+
+# Corre en cada push y PR contra main o wip/*.
+# Levanta Postgres en un service container, copia el schema y corre los smoke
+# tests. Si fallan, GitHub bloquea el merge (configurar branch protection en
+# Settings → Branches para que sea obligatorio).
+on:
+  push:
+    branches: [main, 'wip/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: daledeal_test
+        ports:
+          - 5432:5432
+        # Health check para que el step de tests no arranque antes de que
+        # Postgres esté listo.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV:        test
+      DATABASE_URL:    postgresql://postgres:postgres@localhost:5432/daledeal_test
+      JWT_SECRET:      ci-only-not-a-real-secret-do-not-use-anywhere-else
+      JWT_EXPIRES_IN:  7d
+      FRONTEND_URL:    http://localhost:5500
+      APP_BASE_URL:    http://localhost:3000
+      # MP_* vacíos en CI — los endpoints de payments NO se prueban con
+      # credenciales reales, solo se verifica que existan y respondan.
+      MP_ACCESS_TOKEN: ''
+      MP_PUBLIC_KEY:   ''
+      MP_WEBHOOK_SECRET: ''
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Apply DB schema
+        run: psql "$DATABASE_URL" -f db/schema.sql
+        env:
+          PGPASSWORD: postgres
+
+      - name: Apply DB migrations
+        run: |
+          for m in db/migrations/*.sql; do
+            echo "Applying $m"
+            psql "$DATABASE_URL" -f "$m"
+          done
+        env:
+          PGPASSWORD: postgres
+
+      - name: Run smoke tests
+        run: npm test
+
+      - name: Syntax check de controllers
+        # Defensa-en-profundidad: si algún controller tiene syntax error
+        # que jest no llega a ejecutar (porque no lo importa), node -c lo cacha.
+        run: |
+          for f in src/controllers/*.js src/middleware/*.js src/routes/*.js src/services/*.js; do
+            node -c "$f" || exit 1
+          done
