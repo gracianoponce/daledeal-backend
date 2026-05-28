@@ -26,6 +26,7 @@ const RECOMMENDED = [
   { name: 'NODE_ENV',                    desc: 'development | production | test' },
   { name: 'RESEND_API_KEY',              desc: 'API key de Resend (sin esto los emails no se envían, solo se loggean)' },
   { name: 'EMAIL_FROM',                  desc: 'Remitente de emails (default: Dale Deal <hola@daledeal.com.ar>)' },
+  { name: 'GOOGLE_CLIENT_ID',            desc: 'OAuth Client ID de Google (sin esto el endpoint /auth/google responde 503)' },
 ];
 
 function validateEnv() {

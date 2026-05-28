@@ -4,6 +4,17 @@ const crypto = require('crypto');
 const db     = require('../config/database');
 const { validateEmail, validatePassword } = require('../middleware/validate');
 const { sendEmail, passwordResetTemplate } = require('../services/email');
+const { OAuth2Client } = require('google-auth-library');
+
+// Cliente de Google reutilizado entre requests. Lo inicializamos lazy
+// porque el GOOGLE_CLIENT_ID puede no estar seteado en dev local.
+let googleClient = null;
+function getGoogleClient() {
+  if (!googleClient && process.env.GOOGLE_CLIENT_ID) {
+    googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+  }
+  return googleClient;
+}
 
 // ============================================================
 // POST /auth/register
@@ -340,6 +351,94 @@ const resetPassword = async (req, res) => {
 };
 
 // ============================================================
+// POST /auth/google
+// Recibe un ID token de Google (campo `credential` del flow GIS),
+// lo verifica con google-auth-library, y devuelve nuestro JWT + user
+// con el mismo shape que /auth/login.
+//
+// Flow:
+//   1. Verificar token con Google (firma + audience + expiry)
+//   2. Buscar user por google_id → si existe, login
+//   3. Si no, buscar por email → si existe, linkear google_id
+//   4. Si tampoco, crear user nuevo (sin password)
+// ============================================================
+const googleAuth = async (req, res) => {
+  const { credential } = req.body;
+
+  if (!credential) {
+    return res.status(400).json({ error: 'Falta el credential de Google' });
+  }
+
+  const client = getGoogleClient();
+  if (!client) {
+    console.error('[auth/google] GOOGLE_CLIENT_ID no está seteado en el server');
+    return res.status(503).json({ error: 'Google Sign-In no está configurado en el servidor' });
+  }
+
+  try {
+    // 1) Verificar firma + audience del ID token con Google
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    // Campos útiles del payload: sub (Google ID), email, email_verified,
+    // name, picture, given_name, family_name, locale
+    const googleId = payload.sub;
+    const email = (payload.email || '').toLowerCase();
+    const emailVerified = payload.email_verified === true;
+    const name = payload.name || email.split('@')[0];
+    const picture = payload.picture || null;
+
+    if (!email || !emailVerified) {
+      return res.status(400).json({ error: 'Email de Google no verificado' });
+    }
+
+    // 2) ¿Ya existe por google_id?
+    let userRow = (await db.query(
+      'SELECT * FROM users WHERE google_id = $1 AND is_active = true',
+      [googleId]
+    )).rows[0];
+
+    // 3) Sino, ¿existe por email? → linkear este google_id
+    if (!userRow) {
+      userRow = (await db.query(
+        'SELECT * FROM users WHERE email = $1 AND is_active = true',
+        [email]
+      )).rows[0];
+
+      if (userRow) {
+        await db.query(
+          'UPDATE users SET google_id = $1, avatar_url = COALESCE(avatar_url, $2), updated_at = NOW() WHERE id = $3',
+          [googleId, picture, userRow.id]
+        );
+        userRow.google_id = googleId;
+        userRow.avatar_url = userRow.avatar_url || picture;
+      }
+    }
+
+    // 4) Crear nuevo
+    if (!userRow) {
+      const inserted = await db.query(
+        `INSERT INTO users (name, email, password_hash, google_id, avatar_url)
+         VALUES ($1, $2, NULL, $3, $4)
+         RETURNING *`,
+        [name.slice(0, 100), email, googleId, picture]
+      );
+      userRow = inserted.rows[0];
+    }
+
+    const token = generateToken(userRow);
+    const { password_hash, ...userSafe } = userRow;
+
+    res.json({ token, user: userSafe });
+  } catch (err) {
+    console.error('Error en googleAuth:', err);
+    res.status(401).json({ error: 'Token de Google inválido o expirado' });
+  }
+};
+
+// ============================================================
 // Helper: genera JWT
 // ============================================================
 function generateToken(user) {
@@ -353,6 +452,7 @@ function generateToken(user) {
 module.exports = {
   register,
   login,
+  googleAuth,
   me,
   changePassword,
   deactivateAccount,

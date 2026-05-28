@@ -1,7 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const {
-  register, login, me, changePassword, deactivateAccount,
+  register, login, googleAuth, me, changePassword, deactivateAccount,
   forgotPassword, resetPassword,
 } = require('../controllers/authController');
 const authMiddleware     = require('../middleware/auth');
@@ -12,6 +12,9 @@ router.post('/register', authLimiter, register);
 
 // POST /auth/login     (rate limited)
 router.post('/login', authLimiter, login);
+
+// POST /auth/google    (rate limited) — verifica ID token de Google y devuelve JWT
+router.post('/google', authLimiter, googleAuth);
 
 // GET  /auth/me        (requiere token)
 router.get('/me', authMiddleware, me);
