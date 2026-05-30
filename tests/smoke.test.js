@@ -342,6 +342,44 @@ describe('Smoke — sitemaps adicionales', () => {
 });
 
 // ============================================================
+// /auth/google — Google Sign-In endpoint
+// Verificamos los caminos de error sin necesidad de tokens reales de Google
+// (sería frágil mockear google-auth-library en CI). Sí cubrimos:
+//   - validación de input (sin credential → 400)
+//   - no-config (sin GOOGLE_CLIENT_ID → 503)
+//   - token inválido (firma rota → 401)
+// El happy path requiere un ID token real de Google, lo dejamos para QA manual.
+// ============================================================
+describe('Smoke — POST /auth/google validación de inputs', () => {
+  test('POST /auth/google sin credential → 400', async () => {
+    const res = await request(app).post('/auth/google').send({});
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  test('POST /auth/google con credential null → 400', async () => {
+    const res = await request(app).post('/auth/google').send({ credential: null });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /auth/google con credential string vacío → 400', async () => {
+    const res = await request(app).post('/auth/google').send({ credential: '' });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /auth/google con credential basura → 401 ó 503 (no 500)', async () => {
+    // 503 si GOOGLE_CLIENT_ID no está seteado en el env del test
+    // 401 si está seteado pero el token es inválido (firma rota)
+    // Ambos son aceptables — lo que NO queremos es 500 ni que crashee el server
+    const res = await request(app)
+      .post('/auth/google')
+      .send({ credential: 'not.a.valid.jwt' });
+    expect([401, 503]).toContain(res.status);
+    expect(res.body).toHaveProperty('error');
+  });
+});
+
+// ============================================================
 // Catálogo público — GET /products con filtros raros no debe romper.
 // Defensa contra crashes por inputs maliciosos en query strings.
 // ============================================================
