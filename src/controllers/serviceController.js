@@ -116,6 +116,7 @@ const getServices = async (req, res) => {
       `SELECT
          s.id, s.title, s.price_from, s.price_to, s.currency, s.price_type,
          s.images, s.location, s.zones_covered, s.views, s.created_at,
+         LEFT(s.description, 160) AS description,
          sc.name AS category_name, sc.slug AS category_slug,
          u.id AS provider_id, u.name AS provider_name, u.avatar_url AS provider_avatar,
          COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,

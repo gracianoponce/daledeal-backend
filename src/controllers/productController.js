@@ -219,6 +219,10 @@ const getProducts = async (req, res) => {
          p.location, p.views, p.created_at,
          p.shipping_required, p.offers_delivery, p.offers_pickup,
          p.shipping_cost, p.pickup_address,
+         -- LEFT en lugar de description completo: en el listado solo
+         -- necesitamos ~80 chars para el preview de la card. Evita traer
+         -- descripciones largas (hasta varios KB) por cada item.
+         LEFT(p.description, 160) AS description,
          pc.name AS category_name, pc.slug AS category_slug,
          u.id AS seller_id, u.name AS seller_name, u.avatar_url AS seller_avatar,
          COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,
