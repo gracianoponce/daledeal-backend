@@ -13,6 +13,7 @@ const {
   deleteReview,
 } = require('../controllers/adminController');
 const { listReports, updateReport } = require('../controllers/reportsController');
+const { refundOrder } = require('../controllers/paymentsController');
 
 // Toda la API admin requiere auth + rol admin
 router.use(auth);
@@ -31,6 +32,11 @@ router.patch('/products/:id',   updateProductStatus);
 
 // Órdenes
 router.get('/orders', listOrders);
+
+// Reembolsos — POST /admin/orders/:id/refund
+// Body opcional: { amount?: number, reason?: string }
+// Sin amount → reembolso total. Con amount < total → parcial.
+router.post('/orders/:id/refund', refundOrder);
 
 // Reseñas
 router.get('/reviews',          listReviews);

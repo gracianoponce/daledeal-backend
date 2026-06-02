@@ -47,6 +47,30 @@ const getUserById = async (req, res) => {
 };
 
 // ============================================================
+// GET /users/me   - Perfil propio completo (requiere token)
+// ============================================================
+const getMyProfile = async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, name, email, phone, location, avatar_url, role,
+              email_verified, created_at, updated_at,
+              CASE WHEN google_id IS NOT NULL THEN 'google' ELSE 'email' END AS auth_provider
+       FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error en getMyProfile:', err);
+    res.status(500).json({ error: 'Error al obtener perfil' });
+  }
+};
+
+// ============================================================
 // PUT /users/me   - Actualizar perfil propio (requiere token)
 // ============================================================
 const updateProfile = async (req, res) => {
@@ -132,4 +156,4 @@ const getMyServices = async (req, res) => {
   }
 };
 
-module.exports = { getUserById, updateProfile, getMyProducts, getMyServices };
+module.exports = { getUserById, getMyProfile, updateProfile, getMyProducts, getMyServices };

@@ -601,8 +601,170 @@ const getStatus = async (req, res) => {
   }
 };
 
+// ============================================================
+// POST /admin/orders/:id/refund   - Reembolso (admin only)
+// ============================================================
+/**
+ * Reembolsa una orden vía Mercado Pago.
+ *
+ * Body opcional:
+ *   - amount (number) — monto parcial. Si se omite, reembolso total.
+ *   - reason (string) — motivo interno para logs/auditoría.
+ *
+ * Flujo:
+ *   1. Valida que la orden exista y esté en estado paid (no se puede refund algo no pagado).
+ *   2. Llama a la API Refunds de MP: POST /v1/payments/:payment_id/refunds
+ *   3. Si OK, actualiza orders.payment_status='refunded' y status='cancelled'.
+ *   4. Notifica al comprador por email.
+ *
+ * MP docs: https://www.mercadopago.com.ar/developers/es/reference/chargebacks/_payments_id_refunds/post
+ *
+ * IMPORTANTE: el refund tarda hasta 5 días hábiles en acreditarse en
+ * el método de pago original. El webhook MP también va a llegar y
+ * actualizar el estado — lo hacemos manualmente acá para que el admin
+ * vea el cambio inmediato en la UI.
+ */
+const refundOrder = async (req, res) => {
+  const orderId = parseInt(req.params.id, 10);
+  if (Number.isNaN(orderId)) {
+    return res.status(400).json({ error: 'orderId inválido' });
+  }
+
+  const { amount, reason } = req.body || {};
+  if (amount !== undefined) {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) {
+      return res.status(400).json({ error: 'amount debe ser un número positivo' });
+    }
+  }
+
+  if (!mp.isConfigured) {
+    return res.status(503).json({ error: 'Mercado Pago no está configurado en el servidor' });
+  }
+
+  try {
+    // ── 1. Buscar la orden ───────────────────────────────
+    const orderRes = await db.query(
+      `SELECT o.id, o.payment_status, o.status, o.mp_payment_id,
+              o.total_price, o.buyer_id, o.seller_id,
+              ub.email AS buyer_email, ub.name AS buyer_name,
+              p.title  AS product_title
+         FROM orders o
+         LEFT JOIN users ub  ON ub.id = o.buyer_id
+         LEFT JOIN products p ON p.id = o.product_id
+        WHERE o.id = $1`,
+      [orderId]
+    );
+
+    if (orderRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Orden no encontrada' });
+    }
+
+    const order = orderRes.rows[0];
+
+    if (!order.mp_payment_id) {
+      return res.status(400).json({
+        error: 'Esta orden no tiene un payment_id de MP — probablemente nunca se pagó.',
+      });
+    }
+
+    if (order.payment_status !== 'paid') {
+      return res.status(400).json({
+        error: `No se puede reembolsar una orden con estado "${order.payment_status}". Solo se reembolsan órdenes pagadas.`,
+      });
+    }
+
+    // ── 2. Llamar a MP Refunds ──────────────────────────
+    // El SDK no tiene método dedicado para refunds parciales en la versión actual,
+    // pero podemos hacer un fetch directo a la API REST. Para refund total no se
+    // manda body. Para parcial se manda { amount }.
+    const accessToken = process.env.MP_ACCESS_TOKEN;
+    const refundUrl = `https://api.mercadopago.com/v1/payments/${order.mp_payment_id}/refunds`;
+    const refundBody = (amount && Number(amount) < Number(order.total_price))
+      ? { amount: Number(amount) }
+      : undefined;
+
+    const mpRes = await fetch(refundUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        // Idempotency key: si el admin clickea 2 veces, MP no lo procesa 2 veces
+        'X-Idempotency-Key': `refund-${orderId}-${Date.now()}`,
+      },
+      body: refundBody ? JSON.stringify(refundBody) : undefined,
+    });
+
+    const mpData = await mpRes.json().catch(() => ({}));
+
+    if (!mpRes.ok) {
+      console.error('[refund] MP rejected:', mpRes.status, mpData);
+      return res.status(502).json({
+        error: 'Mercado Pago rechazó el reembolso.',
+        details: mpData?.message || mpData?.error || `HTTP ${mpRes.status}`,
+      });
+    }
+
+    // ── 3. Actualizar la orden en DB ───────────────────
+    const isPartial = refundBody !== undefined;
+    const newPaymentStatus = isPartial ? 'paid' : 'refunded';
+    const newOrderStatus   = isPartial ? order.status : 'cancelled';
+
+    await db.query(
+      `UPDATE orders
+          SET payment_status = $1,
+              status         = $2,
+              updated_at     = NOW()
+        WHERE id = $3`,
+      [newPaymentStatus, newOrderStatus, order.id]
+    );
+
+    // Log de auditoría (consola — en el futuro tabla audit_log)
+    console.log(`[refund] Order #${orderId} ${isPartial ? 'partially' : 'fully'} refunded by admin ${req.user?.id || '?'}. Reason: ${reason || '—'}. MP refund id: ${mpData?.id}`);
+
+    // ── 4. Notificar al comprador (fire-and-forget) ────
+    if (order.buyer_email) {
+      const refundAmount = isPartial ? Number(amount) : Number(order.total_price);
+      const refundFmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0 }).format(refundAmount);
+      const inner = `
+        <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">${isPartial ? 'Reembolso parcial procesado' : 'Reembolso procesado'} ✓</h2>
+        <p>Hola${order.buyer_name ? ' ' + order.buyer_name : ''},</p>
+        <p>Procesamos un reembolso${isPartial ? ' parcial' : ''} para tu orden <strong>#${order.id}</strong> (${order.product_title || 'tu compra'}).</p>
+        <table role="presentation" width="100%" style="background:#f9fafb;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+          <tr><td style="font-size:13px;color:#6b7280;padding:4px 0;">Monto reembolsado:</td><td style="text-align:right;font-weight:700;color:#16a34a;">${refundFmt}</td></tr>
+          ${reason ? `<tr><td style="font-size:13px;color:#6b7280;padding:4px 0;">Motivo:</td><td style="text-align:right;">${String(reason).replace(/[<>]/g, '')}</td></tr>` : ''}
+        </table>
+        <p>El dinero se va a acreditar en tu método de pago original en <strong>1 a 5 días hábiles</strong>, dependiendo del banco/billetera.</p>
+        <p style="font-size:13px;color:#6b7280;">Si tenés dudas, escribinos desde <a href="https://daledeal.com.ar/HTML/contacto.html" style="color:#d63031;">contacto</a>.</p>
+      `;
+      sendEmail({
+        to: order.buyer_email,
+        subject: `${isPartial ? 'Reembolso parcial' : 'Reembolso'} procesado · Orden #${order.id}`,
+        html: `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,sans-serif;color:#1f2937;"><table role="presentation" width="100%" style="background:#f5f5f5;padding:24px 12px;"><tr><td align="center"><table role="presentation" width="600" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);"><tr><td style="background:linear-gradient(135deg,#ff8000 0%,#d63031 100%);padding:24px;text-align:center;"><span style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-.5px;">DALE DEAL</span></td></tr><tr><td style="padding:28px 32px;line-height:1.55;font-size:15px;">${inner}</td></tr></table></td></tr></table></body></html>`,
+        text: `Reembolso procesado por ${refundFmt} en tu orden #${order.id}. Se acreditará en 1-5 días hábiles en tu método de pago original.`,
+      }).catch(e => console.error('[refund] email failed:', e.message));
+    }
+
+    return res.json({
+      ok: true,
+      order_id: order.id,
+      refund_id: mpData?.id,
+      refunded_amount: isPartial ? Number(amount) : Number(order.total_price),
+      partial: isPartial,
+      new_payment_status: newPaymentStatus,
+      new_status: newOrderStatus,
+    });
+  } catch (err) {
+    console.error('[refund] Error:', err);
+    return res.status(500).json({
+      error: 'Error al procesar el reembolso. Revisá los logs del servidor.',
+    });
+  }
+};
+
 module.exports = {
   createPreference,
   handleWebhook,
   getStatus,
+  refundOrder,
 };

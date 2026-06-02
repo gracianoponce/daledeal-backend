@@ -1,9 +1,12 @@
 const express = require('express');
 const router  = express.Router();
 const {
-  getUserById, updateProfile, getMyProducts, getMyServices
+  getUserById, getMyProfile, updateProfile, getMyProducts, getMyServices
 } = require('../controllers/userController');
 const authMiddleware = require('../middleware/auth');
+
+// GET /users/me  (perfil propio completo)
+router.get('/me', authMiddleware, getMyProfile);
 
 // GET /users/me/products  (requiere login)
 router.get('/me/products', authMiddleware, getMyProducts);
