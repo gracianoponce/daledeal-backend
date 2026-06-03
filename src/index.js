@@ -1,5 +1,11 @@
 require('dotenv').config();
 
+// Sentry MUST be the first import after dotenv — su SDK v8 monkeypatcha
+// http/express y necesita engancharse antes de que cualquier handler se
+// registre. Si SENTRY_DSN_BACKEND no está seteado, init() es no-op.
+const { initSentry, Sentry } = require('./config/sentry');
+const sentryEnabled = initSentry();
+
 // Validar env vars críticas antes de cualquier otra cosa.
 // Si falta algo crítico, este process.exit(1) y nadie pierde tiempo.
 require('./config/validateEnv')();
@@ -158,7 +164,16 @@ app.use((req, res) => {
   });
 });
 
-// Error genérico
+// Sentry expressErrorHandler: captura cualquier error 5xx ANTES del handler
+// genérico de abajo. Solo registra errores con statusCode >= 500 por default,
+// no spamea con 4xx (que son errores de cliente, no del servidor).
+// Si sentry no está inicializado (sin DSN), Sentry.setupExpressErrorHandler
+// hace nothing — seguro de llamar.
+if (sentryEnabled) {
+  Sentry.setupExpressErrorHandler(app);
+}
+
+// Error genérico (corre DESPUÉS del handler de Sentry)
 app.use((err, req, res, next) => {
   const status  = err.status || err.statusCode || 500;
   const isDev   = process.env.NODE_ENV !== 'production';
