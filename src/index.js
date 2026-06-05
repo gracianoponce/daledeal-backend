@@ -34,6 +34,7 @@ const adminRoutes     = require('./routes/admin');
 const reportsRoutes   = require('./routes/reports');
 const contactRoutes   = require('./routes/contact');
 const newsletterRoutes = require('./routes/newsletter');
+const backupRoutes    = require('./routes/backup');
 const sitemapRoutes   = require('./routes/sitemap');
 
 const app  = express();
@@ -99,6 +100,7 @@ app.use('/admin',     adminRoutes);
 app.use('/reports',   reportsRoutes);
 app.use('/contact',   contactRoutes);
 app.use('/newsletter', newsletterRoutes);
+app.use('/backup',    backupRoutes);
 // Sitemaps dinámicos (sin prefijo, mounted en root para /sitemap-*.xml)
 app.use('/',          sitemapRoutes);
 

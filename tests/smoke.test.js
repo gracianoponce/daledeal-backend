@@ -505,6 +505,27 @@ describe('Smoke — admin endpoints protegidos', () => {
   });
 });
 
+// ============================================================
+// Backup endpoint — protegido por X-Backup-Token (no JWT)
+// ============================================================
+describe('Smoke — GET /backup/dump protegido', () => {
+  test('sin token devuelve 401 o 503 (nunca expone datos)', async () => {
+    const res = await request(app).get('/backup/dump');
+    // 503 si BACKUP_TOKEN no está seteado en el entorno de test,
+    // 401 si está seteado pero no mandamos el header. Ambos OK: NO 200.
+    expect([401, 503]).toContain(res.status);
+    expect(res.status).not.toBe(200);
+  });
+
+  test('con token incorrecto devuelve 401 o 503', async () => {
+    const res = await request(app)
+      .get('/backup/dump')
+      .set('X-Backup-Token', 'token-falso-12345');
+    expect([401, 503]).toContain(res.status);
+    expect(res.status).not.toBe(200);
+  });
+});
+
 // Cerrar el pool de Postgres al final para que jest no quede colgado
 afterAll(async () => {
   try {
