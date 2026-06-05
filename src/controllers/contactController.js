@@ -5,7 +5,7 @@
  * No requiere autenticación (cualquier visitante puede contactarnos).
  *
  * Envía 2 emails:
- *  1. Al equipo (CONTACT_INBOX o contacto@daledeal.com) con todos los datos.
+ *  1. Al equipo (CONTACT_INBOX o contacto@daledeal.com.ar) con todos los datos.
  *  2. Al usuario confirmando la recepción ("te respondemos en 24hs").
  *
  * Tipos especiales: `tipo=empresa` viene del link "¿Sos una empresa?"
@@ -16,7 +16,10 @@
 const { sendEmail } = require('../services/email');
 const db = require('../config/database');
 
-const CONTACT_INBOX = process.env.CONTACT_INBOX || 'contacto@daledeal.com';
+// Buzón donde llegan los mensajes del form. Default alineado al dominio del
+// sitio (daledeal.com.AR — antes decía .com sin ar, inconsistente con el
+// EMAIL_FROM y la URL de producción). Override con env var CONTACT_INBOX.
+const CONTACT_INBOX = process.env.CONTACT_INBOX || 'contacto@daledeal.com.ar';
 
 /**
  * Guarda un lead B2B en la tabla company_leads (si existe — la migration 010
