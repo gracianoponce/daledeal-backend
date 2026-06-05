@@ -5,15 +5,19 @@ const {
   updateService, deleteService, getCategories
 } = require('../controllers/serviceController');
 const authMiddleware = require('../middleware/auth');
+const cacheControl   = require('../middleware/cacheControl');
+
+const catalogCache  = cacheControl(60, 300);
+const categoryCache = cacheControl(600, 3600);
 
 // GET /services/categories
-router.get('/categories', getCategories);
+router.get('/categories', categoryCache, getCategories);
 
 // GET /services
-router.get('/', getServices);
+router.get('/', catalogCache, getServices);
 
 // GET /services/:id
-router.get('/:id', getServiceById);
+router.get('/:id', catalogCache, getServiceById);
 
 // POST /services  (requiere login)
 router.post('/', authMiddleware, createService);
