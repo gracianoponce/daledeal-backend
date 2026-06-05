@@ -3,7 +3,7 @@ const jwt    = require('jsonwebtoken');
 const crypto = require('crypto');
 const db     = require('../config/database');
 const { validateEmail, validatePassword } = require('../middleware/validate');
-const { sendEmail, passwordResetTemplate } = require('../services/email');
+const { sendEmail, passwordResetTemplate, welcomeEmailTemplate } = require('../services/email');
 const { OAuth2Client } = require('google-auth-library');
 
 // Cliente de Google reutilizado entre requests. Lo inicializamos lazy
@@ -61,6 +61,13 @@ const register = async (req, res) => {
     const user = result.rows[0];
 
     const token = generateToken(user);
+
+    // Welcome email — fire and forget. Si Resend está caído / sin API key,
+    // sendEmail loggea y retorna sin throw. El registro no debe bloquearse
+    // por fallar el email.
+    const tpl = welcomeEmailTemplate({ name: user.name, isFromGoogle: false });
+    sendEmail({ to: user.email, subject: tpl.subject, html: tpl.html, text: tpl.text })
+      .catch(e => console.error('[register] welcome email failed:', e.message));
 
     res.status(201).json({ token, user });
   } catch (err) {
@@ -418,6 +425,7 @@ const googleAuth = async (req, res) => {
     }
 
     // 4) Crear nuevo
+    let isNewUser = false;
     if (!userRow) {
       const inserted = await db.query(
         `INSERT INTO users (name, email, password_hash, google_id, avatar_url)
@@ -426,10 +434,19 @@ const googleAuth = async (req, res) => {
         [name.slice(0, 100), email, googleId, picture]
       );
       userRow = inserted.rows[0];
+      isNewUser = true;
     }
 
     const token = generateToken(userRow);
     const { password_hash, ...userSafe } = userRow;
+
+    // Welcome email solo para usuarios NUEVOS (no en cada login con Google).
+    // Fire and forget — el email no debe bloquear la respuesta.
+    if (isNewUser) {
+      const tpl = welcomeEmailTemplate({ name: userRow.name, isFromGoogle: true });
+      sendEmail({ to: userRow.email, subject: tpl.subject, html: tpl.html, text: tpl.text })
+        .catch(e => console.error('[googleAuth] welcome email failed:', e.message));
+    }
 
     res.json({ token, user: userSafe });
   } catch (err) {

@@ -283,6 +283,47 @@ function formatARS(n) {
   }
 }
 
+// ============================================================
+// Welcome email — primer touchpoint con el usuario.
+// Se manda al crear cuenta (register OR googleAuth).
+// Objetivos: confirmar registro, reducir spam-perception, drive a primera
+// acción (explorar productos / publicar / completar perfil).
+// ============================================================
+function welcomeEmailTemplate({ name, isFromGoogle = false }) {
+  const greeting = name
+    ? `<strong>${escapeHtml(name.split(' ')[0])}</strong>`
+    : 'Bienvenido';
+
+  const inner = `
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">¡Hola, ${greeting}! 👋</h2>
+    <p>Gracias por sumarte a <strong>Dale Deal</strong> — el marketplace argentino de productos y servicios.</p>
+
+    ${isFromGoogle ? '' : '<p style="font-size:13px;color:#6b7280;">Confirmamos que tu cuenta quedó creada con este email.</p>'}
+
+    <p style="margin-top:20px;"><strong>¿Qué podés hacer ahora?</strong></p>
+    <ul style="padding-left:20px;line-height:1.8;">
+      <li><a href="https://daledeal.com.ar/HTML/productos.html" style="color:#d63031;">Explorar productos</a> al mejor precio</li>
+      <li><a href="https://daledeal.com.ar/HTML/servicios.html" style="color:#d63031;">Contratar servicios</a> de profesionales verificados</li>
+      <li><a href="https://daledeal.com.ar/HTML/publicar.html" style="color:#d63031;">Publicar lo que vendés o el servicio que ofrecés</a> (es gratis)</li>
+      <li><a href="https://daledeal.com.ar/HTML/mi-cuenta.html" style="color:#d63031;">Completar tu perfil</a> (foto, ubicación, teléfono)</li>
+    </ul>
+
+    <p style="text-align:center;margin:28px 0;">${btn('Empezar a explorar', 'https://daledeal.com.ar/')}</p>
+
+    <p style="font-size:13px;color:#6b7280;margin-top:24px;">
+      Si tenés cualquier duda, escribinos desde
+      <a href="https://daledeal.com.ar/HTML/contacto.html" style="color:#d63031;">contacto</a>
+      o respondé este email — te leemos.
+    </p>
+    <p style="font-size:13px;color:#6b7280;">— El equipo de Dale Deal</p>
+  `;
+  return {
+    subject: `¡Bienvenido a Dale Deal${name ? ', ' + name.split(' ')[0] : ''}! 🎉`,
+    html:    emailWrap(inner, { title: 'Bienvenido a Dale Deal' }),
+    text:    `¡Hola${name ? ' ' + name.split(' ')[0] : ''}!\n\nGracias por sumarte a Dale Deal.\n\nEmpezá explorando: https://daledeal.com.ar/\nPublicar (gratis): https://daledeal.com.ar/HTML/publicar.html\nMi cuenta: https://daledeal.com.ar/HTML/mi-cuenta.html\n\n— El equipo de Dale Deal`,
+  };
+}
+
 module.exports = {
   sendEmail,
   // Templates listos para usar
@@ -291,4 +332,5 @@ module.exports = {
   newSaleSellerTemplate,
   orderShippedBuyerTemplate,
   paymentFailedBuyerTemplate,
+  welcomeEmailTemplate,
 };
