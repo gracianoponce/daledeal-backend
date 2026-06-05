@@ -4,6 +4,19 @@ const db = require('../config/database');
 // GET /admin/stats — Dashboard
 // Resumen agregado del marketplace
 // ============================================================
+// Helper: ejecuta una query opcional. Si la tabla no existe (42P01) devuelve
+// fallback (default 0). Útil para sumar stats de tablas que pueden o no estar
+// creadas según el estado de las migrations.
+async function tryCount(query, fallback = 0) {
+  try {
+    const r = await db.query(query);
+    return r.rows[0]?.n != null ? r.rows[0].n : (r.rows[0]?.count ?? fallback);
+  } catch (err) {
+    if (err.code === '42P01') return fallback;
+    throw err;
+  }
+}
+
 const getStats = async (req, res) => {
   try {
     const queries = await Promise.all([
@@ -17,6 +30,11 @@ const getStats = async (req, res) => {
       db.query('SELECT COUNT(*)::int AS n FROM reviews'),
       db.query("SELECT COUNT(*)::int AS n FROM users WHERE created_at > NOW() - INTERVAL '7 days'"),
       db.query("SELECT COUNT(*)::int AS n FROM orders WHERE created_at > NOW() - INTERVAL '7 days'"),
+      // Stats agregadas en sprints recientes — son tolerantes a tabla
+      // inexistente (devuelven 0 si la migration no se aplicó todavía)
+      tryCount("SELECT COUNT(*)::int AS n FROM company_leads"),
+      tryCount("SELECT COUNT(*)::int AS n FROM company_leads WHERE status = 'new'"),
+      tryCount("SELECT COUNT(*)::int AS n FROM newsletter_subscribers WHERE unsubscribed_at IS NULL"),
     ]);
 
     res.json({
@@ -30,6 +48,10 @@ const getStats = async (req, res) => {
       reviews_total:       queries[7].rows[0].n,
       new_users_7d:        queries[8].rows[0].n,
       new_orders_7d:       queries[9].rows[0].n,
+      // Nuevas métricas
+      b2b_leads_total:     queries[10],
+      b2b_leads_new:       queries[11],
+      newsletter_active:   queries[12],
     });
   } catch (err) {
     console.error('Error en admin getStats:', err);
