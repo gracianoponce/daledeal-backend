@@ -14,8 +14,45 @@
  */
 
 const { sendEmail } = require('../services/email');
+const db = require('../config/database');
 
 const CONTACT_INBOX = process.env.CONTACT_INBOX || 'contacto@daledeal.com';
+
+/**
+ * Guarda un lead B2B en la tabla company_leads (si existe — la migration 010
+ * la crea). Si la tabla no existe (e.g. migration no aplicada), loggea warning
+ * y devuelve null silenciosamente — el flujo de email sigue funcionando.
+ *
+ * Esto hace el endpoint /contact retrocompatible: el backend deploya antes
+ * que la migration sin romper nada.
+ */
+async function saveCompanyLead(payload, req) {
+  try {
+    const r = await db.query(
+      `INSERT INTO company_leads
+         (nombre, apellido, email, telefono, asunto, mensaje, pedido_id, source_ip, user_agent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        payload.nombre, payload.apellido, payload.email,
+        payload.telefono || null, payload.asunto || null,
+        payload.mensaje, payload.pedidoId || null,
+        req.ip || null,
+        (req.get && req.get('user-agent')) || null,
+      ]
+    );
+    return r.rows[0].id;
+  } catch (err) {
+    // 42P01 = undefined_table — la migration 010 no se aplicó todavía.
+    // No fallar — el ack al user y el email al equipo siguen funcionando.
+    if (err.code === '42P01') {
+      console.warn('[contact] tabla company_leads no existe, skip persistencia (correr migration 010)');
+      return null;
+    }
+    console.error('[contact] Error al persistir lead:', err.message);
+    return null;
+  }
+}
 
 // Limitamos longitud para evitar spam masivo / DoS de la API de Resend
 const MAX_LEN = {
@@ -74,6 +111,17 @@ async function submitContact(req, res) {
     const fullName = `${nombre} ${apellido}`.trim();
     const isEmpresa = tipo === 'empresa';
     const subjectPrefix = isEmpresa ? '🏢 [B2B] ' : '📩 ';
+
+    // Si es lead B2B, persistir en company_leads (no-op si la tabla no existe).
+    // Lo hacemos ANTES del email para que el admin tenga el lead en el
+    // dashboard aunque el envío de email falle.
+    let leadId = null;
+    if (isEmpresa) {
+      leadId = await saveCompanyLead({
+        nombre, apellido, email, telefono, asunto, mensaje, pedidoId
+      }, req);
+      if (leadId) console.log(`[contact] B2B lead #${leadId} guardado (${email})`);
+    }
 
     // ── Email al equipo ────────────────────────────────────────
     const teamInner = `
@@ -156,4 +204,96 @@ async function submitContact(req, res) {
   }
 }
 
-module.exports = { submitContact };
+// ============================================================
+// ADMIN — gestión de leads B2B
+// ============================================================
+
+/**
+ * GET /admin/leads
+ * Lista todos los leads B2B con paginación y filtro por status.
+ * Query params: ?page=1&limit=20&status=new|contacted|qualified|customer|lost
+ */
+async function listLeads(req, res) {
+  const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const offset = (page - 1) * limit;
+  const status = req.query.status;
+
+  const VALID_STATUS = ['new', 'contacted', 'qualified', 'customer', 'lost'];
+  const where = status && VALID_STATUS.includes(status) ? 'WHERE status = $1' : '';
+  const params = status && VALID_STATUS.includes(status) ? [status] : [];
+
+  try {
+    const countRes = await db.query(`SELECT count(*)::int AS total FROM company_leads ${where}`, params);
+    const dataRes = await db.query(
+      `SELECT id, nombre, apellido, email, telefono, asunto, mensaje, pedido_id,
+              status, notes, created_at, updated_at
+         FROM company_leads
+         ${where}
+         ORDER BY created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+
+    res.json({
+      data: dataRes.rows,
+      page,
+      limit,
+      total: countRes.rows[0].total,
+      pages: Math.ceil(countRes.rows[0].total / limit),
+    });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return res.status(503).json({
+        error: 'Tabla company_leads no existe. Correr migration 010_company_leads.sql.',
+      });
+    }
+    console.error('[admin/leads] Error:', err);
+    res.status(500).json({ error: 'Error al listar leads' });
+  }
+}
+
+/**
+ * PATCH /admin/leads/:id
+ * Actualiza status / notes de un lead. Body: { status?, notes? }
+ */
+async function updateLead(req, res) {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id < 1) {
+    return res.status(400).json({ error: 'id inválido' });
+  }
+
+  const { status, notes } = req.body || {};
+  const VALID_STATUS = ['new', 'contacted', 'qualified', 'customer', 'lost'];
+  if (status !== undefined && !VALID_STATUS.includes(status)) {
+    return res.status(400).json({ error: `status debe ser uno de: ${VALID_STATUS.join(', ')}` });
+  }
+  if (notes !== undefined && (typeof notes !== 'string' || notes.length > 5000)) {
+    return res.status(400).json({ error: 'notes inválido (string, max 5000)' });
+  }
+
+  if (status === undefined && notes === undefined) {
+    return res.status(400).json({ error: 'Debe especificar status o notes' });
+  }
+
+  try {
+    const r = await db.query(
+      `UPDATE company_leads
+          SET status = COALESCE($1, status),
+              notes  = COALESCE($2, notes)
+        WHERE id = $3
+       RETURNING id, status, notes, updated_at`,
+      [status || null, notes || null, id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Lead no encontrado' });
+    res.json(r.rows[0]);
+  } catch (err) {
+    if (err.code === '42P01') {
+      return res.status(503).json({ error: 'Tabla company_leads no existe' });
+    }
+    console.error('[admin/leads PATCH] Error:', err);
+    res.status(500).json({ error: 'Error al actualizar lead' });
+  }
+}
+
+module.exports = { submitContact, listLeads, updateLead };

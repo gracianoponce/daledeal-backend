@@ -400,6 +400,94 @@ describe('Smoke — /products tolera filtros raros sin crashear', () => {
   });
 });
 
+// ============================================================
+// POST /contact — endpoint público con rate limiter
+// ============================================================
+describe('Smoke — POST /contact validación', () => {
+  test('POST /contact sin body responde 400 con mensaje claro', async () => {
+    const res = await request(app)
+      .post('/contact')
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('error');
+    expect(res.body.error).toMatch(/Faltan campos obligatorios/i);
+  });
+
+  test('POST /contact con email inválido responde 400', async () => {
+    const res = await request(app)
+      .post('/contact')
+      .send({
+        nombre: 'Test', apellido: 'User', email: 'noesuncorreo',
+        asunto: 'Test', mensaje: 'Test test test'
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/email/i);
+  });
+
+  test('POST /contact con mensaje muy corto responde 400', async () => {
+    const res = await request(app)
+      .post('/contact')
+      .send({
+        nombre: 'Test', apellido: 'User', email: 'test@test.com',
+        asunto: 'Test', mensaje: 'corto'
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/corto/i);
+  });
+
+  test('POST /contact con body válido responde 200 (modo dev sin Resend)', async () => {
+    const res = await request(app)
+      .post('/contact')
+      .send({
+        nombre: 'Test', apellido: 'User', email: 'test@example.com',
+        asunto: 'Consulta', mensaje: 'Este es un mensaje de test válido.'
+      });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('ok', true);
+  });
+});
+
+// ============================================================
+// GET /users/me — perfil propio (requiere auth)
+// ============================================================
+describe('Smoke — GET /users/me requiere auth', () => {
+  test('GET /users/me sin token devuelve 401', async () => {
+    const res = await request(app).get('/users/me');
+    expect(res.status).toBe(401);
+  });
+
+  test('GET /users/me con token inválido devuelve 401', async () => {
+    const res = await request(app)
+      .get('/users/me')
+      .set('Authorization', 'Bearer not-a-real-token');
+    expect(res.status).toBe(401);
+  });
+});
+
+// ============================================================
+// Admin: refund + leads (requieren auth + role=admin)
+// ============================================================
+describe('Smoke — admin endpoints protegidos', () => {
+  test('POST /admin/orders/123/refund sin token devuelve 401', async () => {
+    const res = await request(app)
+      .post('/admin/orders/123/refund')
+      .send({ reason: 'test' });
+    expect(res.status).toBe(401);
+  });
+
+  test('GET /admin/leads sin token devuelve 401', async () => {
+    const res = await request(app).get('/admin/leads');
+    expect(res.status).toBe(401);
+  });
+
+  test('PATCH /admin/leads/1 sin token devuelve 401', async () => {
+    const res = await request(app)
+      .patch('/admin/leads/1')
+      .send({ status: 'contacted' });
+    expect(res.status).toBe(401);
+  });
+});
+
 // Cerrar el pool de Postgres al final para que jest no quede colgado
 afterAll(async () => {
   try {
