@@ -73,6 +73,13 @@ function clip(v, max) {
 }
 
 function isValidEmail(e) {
+  if (typeof e !== 'string') return false;
+  // Defensa en profundidad contra email header injection:
+  // - regex base no permite \s (que cubre \n, \r, \t, espacio)
+  // - rechazamos explícito coma/punto-y-coma (separadores de múltiples destinatarios
+  //   que algunos clientes SMTP aceptan aunque la regex base ya las bloquea)
+  if (/[,;\n\r\t]/.test(e)) return false;
+  if (e.length > 254) return false; // RFC 5321
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 }
 

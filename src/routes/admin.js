@@ -4,6 +4,7 @@ const auth         = require('../middleware/auth');
 const requireAdmin = require('../middleware/requireAdmin');
 const {
   getStats,
+  getStatsTimeseries,
   listUsers,
   updateUser,
   listProducts,
@@ -23,6 +24,8 @@ router.use(requireAdmin);
 
 // Dashboard
 router.get('/stats', getStats);
+// Timeseries diarias para charts (default 30 días, max 365 via ?days=N)
+router.get('/stats/timeseries', getStatsTimeseries);
 
 // Usuarios
 router.get('/users',         listUsers);
@@ -54,8 +57,18 @@ router.get('/newsletter/subscribers', listSubscribers);
 function rowsToCsv(rows, columns) {
   const escape = (v) => {
     if (v === null || v === undefined) return '';
-    const s = String(v).replace(/"/g, '""');
-    return /[",\n]/.test(s) ? `"${s}"` : s;
+    let s = String(v);
+    // CSV INJECTION DEFENSE: si el valor empieza con =, +, -, @, |, %
+    // Excel lo interpreta como fórmula. Un atacante podría poner
+    // =cmd|'/c calc'!A1 en notes/mensaje y ejecutarlo cuando el admin
+    // abre el CSV. Mitigation: prefijar con apóstrofe que Excel ignora
+    // al renderizar pero invalida la fórmula.
+    // OWASP CSV injection: https://owasp.org/www-community/attacks/CSV_Injection
+    if (/^[=+\-@|%]/.test(s)) {
+      s = "'" + s;
+    }
+    s = s.replace(/"/g, '""');
+    return /[",\n\r]/.test(s) ? `"${s}"` : s;
   };
   const header = columns.map(c => c.label || c.key).join(',');
   const body = rows.map(r => columns.map(c => escape(r[c.key])).join(',')).join('\n');

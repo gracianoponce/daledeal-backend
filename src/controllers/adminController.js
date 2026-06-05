@@ -17,6 +17,90 @@ async function tryCount(query, fallback = 0) {
   }
 }
 
+// ============================================================
+// GET /admin/stats/timeseries?days=30
+// Datos diarios de los últimos N días (default 30, max 365):
+// - new_users:       cuentas creadas
+// - new_orders:      órdenes creadas
+// - orders_paid:     órdenes que cambiaron a paid (paid_at)
+// - revenue:         GMV acreditado ese día
+// - new_leads:       leads B2B nuevos (tolerante a tabla inexistente)
+// - new_subscribers: suscriptores newsletter (tolerante a tabla inexistente)
+//
+// Usado por dashboard admin para charts (futuro). Devuelve array ordenado
+// por fecha ASC, con buckets vacíos rellenados a 0 (para que charts no
+// muestren huecos).
+// ============================================================
+const getStatsTimeseries = async (req, res) => {
+  const days = Math.min(365, Math.max(1, parseInt(req.query.days, 10) || 30));
+  try {
+    // generate_series rellena días sin datos con 0 — el chart queda continuo.
+    const r = await db.query(`
+      WITH days AS (
+        SELECT generate_series(
+          (CURRENT_DATE - ($1::int - 1) * INTERVAL '1 day')::date,
+          CURRENT_DATE::date,
+          INTERVAL '1 day'
+        )::date AS day
+      )
+      SELECT
+        d.day,
+        COALESCE((SELECT COUNT(*)::int FROM users
+                  WHERE created_at::date = d.day), 0) AS new_users,
+        COALESCE((SELECT COUNT(*)::int FROM orders
+                  WHERE created_at::date = d.day), 0) AS new_orders,
+        COALESCE((SELECT COUNT(*)::int FROM orders
+                  WHERE paid_at::date = d.day), 0) AS orders_paid,
+        COALESCE((SELECT SUM(total_price)::float FROM orders
+                  WHERE paid_at::date = d.day AND payment_status = 'paid'), 0) AS revenue
+      FROM days d
+      ORDER BY d.day ASC
+    `, [days]);
+
+    // Las tablas company_leads y newsletter_subscribers son nuevas — pueden
+    // no existir aún. Las consultamos por separado con tryCount-style.
+    let newLeadsByDay = {};
+    let newSubscribersByDay = {};
+    try {
+      const rl = await db.query(`
+        SELECT created_at::date AS day, COUNT(*)::int AS n
+          FROM company_leads
+         WHERE created_at >= CURRENT_DATE - ($1::int - 1) * INTERVAL '1 day'
+         GROUP BY day`,
+        [days]);
+      rl.rows.forEach(row => { newLeadsByDay[row.day.toISOString().slice(0,10)] = row.n; });
+    } catch (e) { if (e.code !== '42P01') throw e; }
+    try {
+      const rs = await db.query(`
+        SELECT created_at::date AS day, COUNT(*)::int AS n
+          FROM newsletter_subscribers
+         WHERE created_at >= CURRENT_DATE - ($1::int - 1) * INTERVAL '1 day'
+         GROUP BY day`,
+        [days]);
+      rs.rows.forEach(row => { newSubscribersByDay[row.day.toISOString().slice(0,10)] = row.n; });
+    } catch (e) { if (e.code !== '42P01') throw e; }
+
+    res.json({
+      days,
+      data: r.rows.map(row => {
+        const dayKey = row.day.toISOString().slice(0, 10);
+        return {
+          day:             dayKey,
+          new_users:       row.new_users,
+          new_orders:      row.new_orders,
+          orders_paid:     row.orders_paid,
+          revenue:         Number(row.revenue) || 0,
+          new_leads:       newLeadsByDay[dayKey] || 0,
+          new_subscribers: newSubscribersByDay[dayKey] || 0,
+        };
+      }),
+    });
+  } catch (err) {
+    console.error('[admin/stats/timeseries] Error:', err);
+    res.status(500).json({ error: 'Error al obtener timeseries' });
+  }
+};
+
 const getStats = async (req, res) => {
   try {
     const queries = await Promise.all([
@@ -347,6 +431,7 @@ const deleteReview = async (req, res) => {
 
 module.exports = {
   getStats,
+  getStatsTimeseries,
   listUsers,
   updateUser,
   listProducts,

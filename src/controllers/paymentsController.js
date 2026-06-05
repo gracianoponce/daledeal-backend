@@ -642,9 +642,22 @@ const refundOrder = async (req, res) => {
     return res.status(503).json({ error: 'Mercado Pago no está configurado en el servidor' });
   }
 
+  // RACE CONDITION DEFENSE: usamos una transacción con SELECT...FOR UPDATE
+  // para que si el admin clickea "Reembolsar" 2 veces simultáneo (o si la
+  // request tarda y se reintenta), solo UNA pase. La fila queda lockeada
+  // hasta que termine el UPDATE final (o el ROLLBACK si falla MP).
+  //
+  // Sin esto, 2 requests concurrentes podían:
+  //   - Ambas leer payment_status='paid'
+  //   - Ambas llamar a MP Refunds (Idempotency-Key con Date.now() es distinto)
+  //   - Ambas terminar marcando refunded
+  //   → 2 refunds emitidos, comprador devuelto 2 veces (o sea: chargeback).
+  const client = await db.pool.connect();
   try {
-    // ── 1. Buscar la orden ───────────────────────────────
-    const orderRes = await db.query(
+    await client.query('BEGIN');
+
+    // ── 1. Buscar la orden con LOCK ─────────────────────
+    const orderRes = await client.query(
       `SELECT o.id, o.payment_status, o.status, o.mp_payment_id,
               o.total_price, o.buyer_id, o.seller_id,
               ub.email AS buyer_email, ub.name AS buyer_name,
@@ -652,23 +665,27 @@ const refundOrder = async (req, res) => {
          FROM orders o
          LEFT JOIN users ub  ON ub.id = o.buyer_id
          LEFT JOIN products p ON p.id = o.product_id
-        WHERE o.id = $1`,
+        WHERE o.id = $1
+          FOR UPDATE OF o`,
       [orderId]
     );
 
     if (orderRes.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Orden no encontrada' });
     }
 
     const order = orderRes.rows[0];
 
     if (!order.mp_payment_id) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         error: 'Esta orden no tiene un payment_id de MP — probablemente nunca se pagó.',
       });
     }
 
     if (order.payment_status !== 'paid') {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         error: `No se puede reembolsar una orden con estado "${order.payment_status}". Solo se reembolsan órdenes pagadas.`,
       });
@@ -699,18 +716,19 @@ const refundOrder = async (req, res) => {
 
     if (!mpRes.ok) {
       console.error('[refund] MP rejected:', mpRes.status, mpData);
+      await client.query('ROLLBACK');
       return res.status(502).json({
         error: 'Mercado Pago rechazó el reembolso.',
         details: mpData?.message || mpData?.error || `HTTP ${mpRes.status}`,
       });
     }
 
-    // ── 3. Actualizar la orden en DB ───────────────────
+    // ── 3. Actualizar la orden en DB (dentro de la misma TX) ─
     const isPartial = refundBody !== undefined;
     const newPaymentStatus = isPartial ? 'paid' : 'refunded';
     const newOrderStatus   = isPartial ? order.status : 'cancelled';
 
-    await db.query(
+    await client.query(
       `UPDATE orders
           SET payment_status = $1,
               status         = $2,
@@ -718,6 +736,8 @@ const refundOrder = async (req, res) => {
         WHERE id = $3`,
       [newPaymentStatus, newOrderStatus, order.id]
     );
+
+    await client.query('COMMIT');
 
     // Log de auditoría (consola — en el futuro tabla audit_log)
     console.log(`[refund] Order #${orderId} ${isPartial ? 'partially' : 'fully'} refunded by admin ${req.user?.id || '?'}. Reason: ${reason || '—'}. MP refund id: ${mpData?.id}`);
@@ -755,10 +775,16 @@ const refundOrder = async (req, res) => {
       new_status: newOrderStatus,
     });
   } catch (err) {
+    // Si algo falló DESPUÉS del BEGIN, hacer ROLLBACK para liberar el lock.
+    // Try/catch interno: si client ya está released o el ROLLBACK falla,
+    // no queremos enmascarar el error real.
+    try { await client.query('ROLLBACK'); } catch (_) {}
     console.error('[refund] Error:', err);
     return res.status(500).json({
       error: 'Error al procesar el reembolso. Revisá los logs del servidor.',
     });
+  } finally {
+    client.release();
   }
 };
 
