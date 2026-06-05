@@ -445,6 +445,23 @@ describe('Smoke — POST /contact validación', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('ok', true);
   });
+
+  test('POST /contact con honeypot completo responde 200 (silenciosamente descarta el spam)', async () => {
+    // El campo `website` es un honeypot — si el cliente lo manda con
+    // cualquier valor, el server NO procesa pero responde 200 (no le da
+    // pista al bot de que detectamos).
+    const res = await request(app)
+      .post('/contact')
+      .send({
+        nombre: 'Spam', apellido: 'Bot', email: 'spam@bot.com',
+        asunto: 'Spam', mensaje: 'cheap viagra click here lorem ipsum',
+        website: 'http://spam-site.example.com',
+      });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('ok', true);
+    // Importante: con honeypot triggered NO validamos nombre/email/asunto/mensaje
+    // (se hubiera devuelto 400 sino, pero el shortcut salta antes)
+  });
 });
 
 // ============================================================

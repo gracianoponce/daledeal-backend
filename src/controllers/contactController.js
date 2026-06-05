@@ -85,6 +85,16 @@ function escapeHtml(s) {
 async function submitContact(req, res) {
   try {
     const body = req.body || {};
+
+    // Honeypot anti-spam: campo invisible llamado "website" que ningún humano
+    // ve. Si llega con cualquier valor, es bot scraper → respondemos 200
+    // como si todo OK (no le damos pista de que detectamos el spam) pero NO
+    // procesamos nada. Es el patrón más simple y efectivo (95% efectividad).
+    if (body.website && String(body.website).trim().length > 0) {
+      console.log(`[contact] Honeypot triggered (bot detected), IP=${req.ip}, value="${String(body.website).slice(0, 80)}"`);
+      return res.json({ ok: true, message: 'Mensaje enviado.' });
+    }
+
     const nombre   = clip(body.nombre,   MAX_LEN.nombre);
     const apellido = clip(body.apellido, MAX_LEN.apellido);
     const email    = clip(body.email,    MAX_LEN.email);
