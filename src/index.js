@@ -40,6 +40,12 @@ const sitemapRoutes   = require('./routes/sitemap');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
+// Detrás del proxy de Railway: confiar en el primer salto para que req.ip
+// sea la IP real del cliente (X-Forwarded-For) y no la IP interna del edge
+// (100.64.x.x). Sin esto, el rate limiter agrupa a TODOS los usuarios bajo
+// la IP del proxy: castiga a los legítimos y no frena fuerza bruta.
+app.set('trust proxy', 1);
+
 // ============================================================
 // MIDDLEWARES GLOBALES
 // ============================================================
