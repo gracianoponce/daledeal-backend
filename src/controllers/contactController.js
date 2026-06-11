@@ -57,6 +57,39 @@ async function saveCompanyLead(payload, req) {
   }
 }
 
+/**
+ * Guarda TODO mensaje de contacto (general y empresa) en contact_messages
+ * (migration 012). Es la red de seguridad: aunque el email no llegue, el
+ * mensaje queda en la base. Mismo patrón retrocompatible que saveCompanyLead:
+ * si la tabla no existe (42P01) o falla la DB, loggea y devuelve null sin
+ * romper el flujo de email/ack.
+ */
+async function saveContactMessage(payload, req) {
+  try {
+    const r = await db.query(
+      `INSERT INTO contact_messages
+         (nombre, apellido, email, telefono, asunto, mensaje, tipo, pedido_id, source_ip, user_agent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING id`,
+      [
+        payload.nombre, payload.apellido || null, payload.email,
+        payload.telefono || null, payload.asunto || null, payload.mensaje,
+        payload.tipo || 'general', payload.pedidoId || null,
+        req.ip || null,
+        (req.get && req.get('user-agent')) || null,
+      ]
+    );
+    return r.rows[0].id;
+  } catch (err) {
+    if (err.code === '42P01') {
+      console.warn('[contact] tabla contact_messages no existe, skip persistencia (correr migration 012)');
+      return null;
+    }
+    console.error('[contact] Error al persistir mensaje:', err.message);
+    return null;
+  }
+}
+
 // Limitamos longitud para evitar spam masivo / DoS de la API de Resend
 const MAX_LEN = {
   nombre:  100,
@@ -131,6 +164,13 @@ async function submitContact(req, res) {
     const fullName = `${nombre} ${apellido}`.trim();
     const isEmpresa = tipo === 'empresa';
     const subjectPrefix = isEmpresa ? '🏢 [B2B] ' : '📩 ';
+
+    // Persistir TODOS los mensajes (general y empresa) para no perder ninguno
+    // aunque falle el email. No-op si la tabla no existe (migration 012).
+    const msgId = await saveContactMessage(
+      { nombre, apellido, email, telefono, asunto, mensaje, tipo, pedidoId }, req
+    );
+    if (msgId) console.log(`[contact] mensaje #${msgId} guardado (${email})`);
 
     // Si es lead B2B, persistir en company_leads (no-op si la tabla no existe).
     // Lo hacemos ANTES del email para que el admin tenga el lead en el
