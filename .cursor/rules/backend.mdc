@@ -1,0 +1,56 @@
+---
+description: Reglas del backend Dale Deal — contexto, convenciones y límites
+alwaysApply: true
+---
+
+# Dale Deal — Backend (Express + PostgreSQL)
+
+API del marketplace. **EN PRODUCCIÓN en Railway** (proyecto `sparkling-happiness`,
+servicios `daledeal-backend` + `Postgres`). La base es LA de producción — prudencia máxima.
+
+## Regla #1 (la más importante)
+**Pushear a `main` DISPARA EL DEPLOY AUTOMÁTICO a producción.**
+Trabajar SIEMPRE en ramas (`feat/...`); el merge+push a main lo hace Claude/Graciano
+con OK explícito y verificación post-deploy. NO sugerir push a main.
+
+## Estructura
+- `src/index.js` — app Express. OJO: `app.set('trust proxy', 1)` es necesario
+  (Railway está detrás de proxy; sin eso el rate limiter agrupa a todos por la IP del edge).
+- `src/routes/*` → `src/controllers/*` — patrón consistente, mirar uno antes de crear otro.
+- `src/middleware/` — auth (JWT), rateLimiter (in-memory), validate, securityHeaders, logger.
+- `src/config/database.js` — pool pg con `DATABASE_URL`. En Railway esa var se construye
+  con REFERENCIAS a las vars del servicio Postgres (no strings estáticos — lección del
+  incidente del 11/06, ver `docs/lanzamiento/incidente-2026-06-11-postgres.md` en el front).
+- `src/services/email.js` — Resend; sin API key loggea a consola (modo dev).
+
+## Migraciones
+- `db/migrations/NNN_descripcion.sql` — numeradas, **idempotentes**
+  (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`), **aditivas**
+  (no ALTER destructivo). Última: `012_contact_messages.sql`.
+- Se aplican a prod A MANO (Railway) con OK explícito — nunca automatizar contra prod.
+- Patrón de retrocompatibilidad: el código tolera que la tabla nueva no exista
+  (catch del error `42P01` → warn + seguir). Mantenerlo: el deploy del código puede
+  llegar antes que la migración.
+
+## Tests
+```bash
+NODE_ENV=test npx jest --forceExit --runInBand
+```
+- supertest contra `src/index` (64 tests). No requieren DB poblada; los endpoints
+  protegidos se testean por el rechazo sin auth.
+- `_resetStoreForTests()` del rateLimiter en `beforeEach` (todas las requests del test
+  salen de 127.0.0.1 y se acumulan).
+- Si agregás endpoint, agregá test (mirar `tests/contact.test.js` como patrón).
+
+## Reglas duras
+1. **NO tocar `.env`** (secretos del dueño). Las env vars de prod viven en Railway.
+2. Queries SIEMPRE parametrizadas (`$1, $2`) — jamás concatenar input en SQL.
+3. Todo HTML en emails: escapar con el `escapeHtml` local del controller.
+4. Validar/clipear inputs (mirar `MAX_LEN` + `clip()` en contactController).
+5. Mercado Pago: SDK **v2** (`mercadopago@^2.12.0`) — hay un stash con un bump a v3;
+   el upgrade se hace deliberadamente con un pago de prueba, no de pasada.
+6. Español argentino (voseo) en mensajes al usuario.
+
+## Ramas
+- `feat/mejoras-backend` = rama de trabajo actual.
+- `main` = lo deployado (auto-deploy al push — ver Regla #1).
