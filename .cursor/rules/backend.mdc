@@ -49,6 +49,9 @@ NODE_ENV=test npx jest --forceExit --runInBand
 4. Validar/clipear inputs (mirar `MAX_LEN` + `clip()` en contactController).
 5. Mercado Pago: SDK **v2** (`mercadopago@^2.12.0`) — hay un stash con un bump a v3;
    el upgrade se hace deliberadamente con un pago de prueba, no de pasada.
+   **PROHIBIDO `npm audit fix --force`**: hace upgrades de versión MAYOR sin avisar
+   (así fue como mercadopago saltó a v3 por accidente el 06/2026). Si npm audit
+   marca algo, evaluarlo a mano.
 6. Español argentino (voseo) en mensajes al usuario.
 
 ## Ramas
