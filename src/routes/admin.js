@@ -17,6 +17,7 @@ const { listReports, updateReport } = require('../controllers/reportsController'
 const { refundOrder } = require('../controllers/paymentsController');
 const { listLeads, updateLead } = require('../controllers/contactController');
 const { listSubscribers } = require('../controllers/newsletterController');
+const { listVerifications, reviewVerification } = require('../controllers/verificationController');
 
 // Toda la API admin requiere auth + rol admin
 router.use(auth);
@@ -26,6 +27,10 @@ router.use(requireAdmin);
 router.get('/stats', getStats);
 // Timeseries diarias para charts (default 30 días, max 365 via ?days=N)
 router.get('/stats/timeseries', getStatsTimeseries);
+
+// Verificaciones de prestadores: cola de revisión + aprobar/rechazar
+router.get('/verifications', listVerifications);
+router.post('/verifications/:id/review', reviewVerification);
 
 // Usuarios
 router.get('/users',         listUsers);

@@ -33,6 +33,7 @@ const paymentsRoutes  = require('./routes/payments');
 const adminRoutes     = require('./routes/admin');
 const reportsRoutes   = require('./routes/reports');
 const contactRoutes   = require('./routes/contact');
+const verificationRoutes = require('./routes/verifications');
 const newsletterRoutes = require('./routes/newsletter');
 const backupRoutes    = require('./routes/backup');
 const sitemapRoutes   = require('./routes/sitemap');
@@ -105,6 +106,7 @@ app.use('/payments',  paymentsRoutes);
 app.use('/admin',     adminRoutes);
 app.use('/reports',   reportsRoutes);
 app.use('/contact',   contactRoutes);
+app.use('/verifications', verificationRoutes);
 app.use('/newsletter', newsletterRoutes);
 app.use('/backup',    backupRoutes);
 // Sitemaps dinámicos (sin prefijo, mounted en root para /sitemap-*.xml)
