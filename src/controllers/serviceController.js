@@ -119,6 +119,8 @@ const getServices = async (req, res) => {
          LEFT(s.description, 160) AS description,
          sc.name AS category_name, sc.slug AS category_slug,
          u.id AS provider_id, u.name AS provider_name, u.avatar_url AS provider_avatar,
+         u.verified_identity     AS provider_verified_identity,
+         u.verified_professional AS provider_verified_professional,
          COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,
          COALESCE(rs.review_count, 0)::INT AS review_count
        FROM services s
@@ -178,6 +180,9 @@ const getServiceById = async (req, res) => {
          u.id AS provider_id, u.name AS provider_name,
          u.avatar_url AS provider_avatar, u.phone AS provider_phone,
          u.location AS provider_location, u.created_at AS provider_since,
+         u.verified_identity     AS provider_verified_identity,
+         u.verified_professional AS provider_verified_professional,
+         u.verified_at           AS provider_verified_at,
          COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,
          COALESCE(rs.review_count, 0)::INT AS review_count
        FROM services s

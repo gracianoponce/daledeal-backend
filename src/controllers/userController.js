@@ -9,7 +9,8 @@ const getUserById = async (req, res) => {
 
   try {
     const userResult = await db.query(
-      `SELECT id, name, avatar_url, location, created_at
+      `SELECT id, name, avatar_url, location, created_at,
+              verified_identity, verified_professional, verified_at
        FROM users WHERE id = $1 AND is_active = true`,
       [id]
     );
