@@ -11,9 +11,17 @@
  */
 const db = require('../config/database');
 
-const TYPES = ['identity', 'professional'];
+// Columna de users que "prende" cada tipo al aprobarse. background = antecedentes
+// penales validados contra el RNR por su código oficial (sin guardar documentos).
+const TYPE_COLS = {
+  identity:     'verified_identity',
+  professional: 'verified_professional',
+  background:   'verified_background',
+};
+const TYPES = Object.keys(TYPE_COLS);
 const clip = (v, max = 500) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
-const migPending = (err) => err.code === '42P01' || err.code === '42703';
+// 23514 = check constraint (migration 014 sin aplicar y llega type 'background')
+const migPending = (err) => err.code === '42P01' || err.code === '42703' || err.code === '23514';
 
 // POST /verifications  (auth) — el prestador solicita una verificación
 async function requestVerification(req, res) {
@@ -21,10 +29,10 @@ async function requestVerification(req, res) {
     const type = clip(req.body?.type, 20).toLowerCase();
     const contactNote = clip(req.body?.contact_note, 500);
     if (!TYPES.includes(type)) {
-      return res.status(400).json({ error: "Tipo inválido. Usá 'identity' o 'professional'." });
+      return res.status(400).json({ error: "Tipo inválido. Usá 'identity', 'professional' o 'background'." });
     }
-    // Columna derivada de un valor fijo (no del input) → sin riesgo de inyección.
-    const col = type === 'identity' ? 'verified_identity' : 'verified_professional';
+    // Columna derivada del mapa fijo (no del input) → sin riesgo de inyección.
+    const col = TYPE_COLS[type];
     const u = await db.query(`SELECT ${col} AS v FROM users WHERE id = $1`, [req.user.id]);
     if (u.rows[0]?.v) {
       return res.status(409).json({ error: 'Ya tenés esta verificación aprobada.' });
@@ -52,7 +60,8 @@ async function requestVerification(req, res) {
 async function getMyVerification(req, res) {
   try {
     const u = await db.query(
-      'SELECT verified_identity, verified_professional, verified_at FROM users WHERE id = $1',
+      `SELECT verified_identity, verified_professional, verified_background, verified_at
+         FROM users WHERE id = $1`,
       [req.user.id]
     );
     const reqs = await db.query(
@@ -65,7 +74,7 @@ async function getMyVerification(req, res) {
     return res.json({ ...(u.rows[0] || {}), requests: reqs.rows });
   } catch (err) {
     if (migPending(err)) {
-      return res.json({ verified_identity: false, verified_professional: false, verified_at: null, requests: [] });
+      return res.json({ verified_identity: false, verified_professional: false, verified_background: false, verified_at: null, requests: [] });
     }
     console.error('[verifications] me:', err.message);
     return res.status(500).json({ error: 'Error al leer tu verificación.' });
@@ -128,7 +137,7 @@ async function reviewVerification(req, res) {
       [newStatus, adminNote || null, req.user.id, id]
     );
     if (decision === 'approve') {
-      const col = cur.rows[0].type === 'identity' ? 'verified_identity' : 'verified_professional';
+      const col = TYPE_COLS[cur.rows[0].type] || 'verified_identity';
       await client.query(
         `UPDATE users SET ${col} = true, verified_at = NOW() WHERE id = $1`,
         [cur.rows[0].user_id]
