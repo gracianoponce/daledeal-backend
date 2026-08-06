@@ -18,6 +18,7 @@ const { refundOrder } = require('../controllers/paymentsController');
 const { listLeads, updateLead } = require('../controllers/contactController');
 const { listSubscribers } = require('../controllers/newsletterController');
 const { listVerifications, reviewVerification } = require('../controllers/verificationController');
+const { listReleasable, releaseOrder, holdOrder } = require('../controllers/payoutController');
 
 // Toda la API admin requiere auth + rol admin
 router.use(auth);
@@ -47,6 +48,14 @@ router.get('/orders', listOrders);
 // Body opcional: { amount?: number, reason?: string }
 // Sin amount → reembolso total. Con amount < total → parcial.
 router.post('/orders/:id/refund', refundOrder);
+
+// Escrow — cola de retenciones + liberar/frenar (migration 015)
+// GET  /admin/payouts/pending      — órdenes pagas retenidas (liberables primero)
+// POST /admin/orders/:id/release   — registrar liberación al vendedor
+// POST /admin/orders/:id/hold      — frenar/desfrenar por reclamo {hold:bool}
+router.get('/payouts/pending', listReleasable);
+router.post('/orders/:id/release', releaseOrder);
+router.post('/orders/:id/hold', holdOrder);
 
 // Leads B2B (vienen del form de contacto con tipo=empresa)
 // GET    /admin/leads         — lista paginada, ?status= para filtrar

@@ -581,7 +581,53 @@ async function sendShippedNotification(orderId) {
   await sendEmail({ to: o.buyer_email, subject: tpl.subject, html: tpl.html, text: tpl.text });
 }
 
+// ============================================================
+// POST /orders/:id/confirm-delivery — el COMPRADOR confirma recepción
+// Dispara la liberación del pago retenido (escrow, migration 015).
+// Idempotente: si ya estaba confirmada, devuelve la orden tal cual.
+// ============================================================
+const confirmDelivery = async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'ID inválido' });
+
+  try {
+    const check = await db.query(
+      'SELECT buyer_id, status, buyer_confirmed_at FROM orders WHERE id = $1',
+      [id]
+    );
+    if (check.rows.length === 0) return res.status(404).json({ error: 'Orden no encontrada' });
+    const order = check.rows[0];
+    if (order.buyer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Solo el comprador puede confirmar la recepción' });
+    }
+    if (!['shipped', 'delivered'].includes(order.status)) {
+      return res.status(409).json({ error: 'La orden todavía no fue despachada' });
+    }
+    if (order.buyer_confirmed_at) {
+      const cur = await db.query('SELECT * FROM orders WHERE id = $1', [id]);
+      return res.json({ message: 'Ya habías confirmado la recepción', order: cur.rows[0] });
+    }
+
+    const result = await db.query(
+      `UPDATE orders
+          SET buyer_confirmed_at = NOW(),
+              status = 'delivered',
+              delivered_at = COALESCE(delivered_at, NOW()),
+              updated_at = NOW()
+        WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    res.json({ message: 'Recepción confirmada — el pago del vendedor queda habilitado para liberarse', order: result.rows[0] });
+  } catch (err) {
+    if (err.code === '42703' || err.code === '42P01') {
+      return res.status(503).json({ error: 'La confirmación de recepción todavía no está disponible.' });
+    }
+    console.error('Error en confirmDelivery:', err);
+    res.status(500).json({ error: 'Error al confirmar la recepción' });
+  }
+};
+
 module.exports = {
   createOrder, getMyOrders, getMySales, getOrderById,
-  updateOrderStatus, updateShippingTracking,
+  updateOrderStatus, updateShippingTracking, confirmDelivery,
 };

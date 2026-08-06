@@ -7,6 +7,7 @@ const {
   getOrderById,
   updateOrderStatus,
   updateShippingTracking,
+  confirmDelivery,
 } = require('../controllers/ordersController');
 const authMiddleware            = require('../middleware/auth');
 const { createLimiter }         = require('../middleware/rateLimiter');
@@ -31,5 +32,8 @@ router.patch('/:id/status', updateOrderStatus);
 
 // PATCH  /orders/:id/shipping  — Vendedor: cargar tracking + marcar despachado
 router.patch('/:id/shipping', updateShippingTracking);
+
+// POST   /orders/:id/confirm-delivery — Comprador: confirmar recepción (escrow)
+router.post('/:id/confirm-delivery', confirmDelivery);
 
 module.exports = router;
