@@ -9,7 +9,8 @@ const tracking = require('../services/tracking');
 // Si la migration todavía no está aplicada (42703) reintentamos sin sus
 // columnas: "Mis compras" y "Mis ventas" no se pueden caer por esto.
 // ============================================================
-const TRACKING_COLS = 'o.shipping_carrier, o.tracking_status, o.tracking_status_at, o.delivered_source,';
+// buyer_confirmed_at es de la 015 (escrow): el comprador necesita saber si ya confirmó.
+const TRACKING_COLS = 'o.shipping_carrier, o.tracking_status, o.tracking_status_at, o.delivered_source, o.buyer_confirmed_at,';
 
 async function queryWithTrackingCols(buildSql, params) {
   try {
