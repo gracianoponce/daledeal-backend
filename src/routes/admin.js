@@ -18,7 +18,7 @@ const { refundOrder } = require('../controllers/paymentsController');
 const { listLeads, updateLead } = require('../controllers/contactController');
 const { listSubscribers } = require('../controllers/newsletterController');
 const { listVerifications, reviewVerification } = require('../controllers/verificationController');
-const { listReleasable, releaseOrder, holdOrder } = require('../controllers/payoutController');
+const { listReleasable, listReleased, releaseOrder, holdOrder } = require('../controllers/payoutController');
 
 // Toda la API admin requiere auth + rol admin
 router.use(auth);
@@ -54,6 +54,8 @@ router.post('/orders/:id/refund', refundOrder);
 // POST /admin/orders/:id/release   — registrar liberación al vendedor
 // POST /admin/orders/:id/hold      — frenar/desfrenar por reclamo {hold:bool}
 router.get('/payouts/pending', listReleasable);
+// GET  /admin/payouts/released     — historial de liberaciones (payouts registrados)
+router.get('/payouts/released', listReleased);
 router.post('/orders/:id/release', releaseOrder);
 router.post('/orders/:id/hold', holdOrder);
 

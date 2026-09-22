@@ -23,6 +23,11 @@ describe('Escrow — auth', () => {
     expect(res.status).toBe(401);
   });
 
+  test('GET /admin/payouts/released sin token → 401', async () => {
+    const res = await request(app).get('/admin/payouts/released');
+    expect(res.status).toBe(401);
+  });
+
   test('POST /admin/orders/1/release sin token → 401', async () => {
     const res = await request(app).post('/admin/orders/1/release').send({ note: 'test' });
     expect(res.status).toBe(401);

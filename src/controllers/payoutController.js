@@ -24,6 +24,7 @@ async function listReleasable(req, res) {
     const r = await db.query(
       `SELECT o.id, o.total_price, o.commission_amount, o.currency, o.status,
               o.paid_at, o.delivered_at, o.buyer_confirmed_at, o.release_status,
+              o.delivered_source, o.shipping_method,
               (o.total_price - COALESCE(o.commission_amount, 0)) AS net_amount,
               ${RELEASABLE_SQL} AS releasable,
               p.title AS product_title,
@@ -42,6 +43,36 @@ async function listReleasable(req, res) {
     if (migPending(err)) return res.json({ total: 0, orders: [] });
     console.error('[payouts] list:', err.message);
     return res.status(500).json({ error: 'Error al listar retenciones.' });
+  }
+}
+
+// GET /admin/payouts/released — historial de liberaciones registradas (más nuevas primero)
+async function listReleased(req, res) {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const r = await db.query(
+      `SELECT p.id AS payout_id, p.order_id, p.gross_amount, p.commission_amount, p.net_amount,
+              p.currency, p.method, p.reference, p.note, p.created_at,
+              o.status, o.delivered_at, o.buyer_confirmed_at, o.released_at, o.delivered_source,
+              pr.title AS product_title,
+              us.id AS seller_id, us.name AS seller_name, us.email AS seller_email,
+              ub.name AS buyer_name,
+              ua.name AS admin_name
+         FROM payouts p
+         JOIN orders o ON o.id = p.order_id
+         LEFT JOIN products pr ON pr.id = o.product_id
+         LEFT JOIN users us ON us.id = p.seller_id
+         LEFT JOIN users ub ON ub.id = o.buyer_id
+         LEFT JOIN users ua ON ua.id = p.created_by
+        ORDER BY p.created_at DESC
+        LIMIT $1`,
+      [limit]
+    );
+    return res.json({ total: r.rows.length, payouts: r.rows });
+  } catch (err) {
+    if (migPending(err)) return res.json({ total: 0, payouts: [] });
+    console.error('[payouts] released:', err.message);
+    return res.status(500).json({ error: 'Error al listar liberaciones.' });
   }
 }
 
@@ -142,4 +173,4 @@ async function holdOrder(req, res) {
   }
 }
 
-module.exports = { listReleasable, releaseOrder, holdOrder, RELEASE_DAYS };
+module.exports = { listReleasable, listReleased, releaseOrder, holdOrder, RELEASE_DAYS };
