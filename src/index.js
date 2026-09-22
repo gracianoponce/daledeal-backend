@@ -37,6 +37,8 @@ const verificationRoutes = require('./routes/verifications');
 const newsletterRoutes = require('./routes/newsletter');
 const backupRoutes    = require('./routes/backup');
 const sitemapRoutes   = require('./routes/sitemap');
+const shippingRoutes  = require('./routes/shipping');
+const webhookRoutes   = require('./routes/webhooks');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -109,6 +111,8 @@ app.use('/contact',   contactRoutes);
 app.use('/verifications', verificationRoutes);
 app.use('/newsletter', newsletterRoutes);
 app.use('/backup',    backupRoutes);
+app.use('/shipping',  shippingRoutes);
+app.use('/webhooks',  webhookRoutes);
 // Sitemaps dinámicos (sin prefijo, mounted en root para /sitemap-*.xml)
 app.use('/',          sitemapRoutes);
 

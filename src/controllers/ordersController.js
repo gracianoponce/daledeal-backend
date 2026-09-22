@@ -2,6 +2,47 @@ const db = require('../config/database');
 const { findOrCreateConversation } = require('./messageController');
 const { sendEmail, orderShippedBuyerTemplate } = require('../services/email');
 const { parsePagination } = require('../middleware/validate');
+const tracking = require('../services/tracking');
+
+// ============================================================
+// Tracking de envíos (migration 016)
+// Si la migration todavía no está aplicada (42703) reintentamos sin sus
+// columnas: "Mis compras" y "Mis ventas" no se pueden caer por esto.
+// ============================================================
+const TRACKING_COLS = 'o.shipping_carrier, o.tracking_status, o.tracking_status_at, o.delivered_source,';
+
+async function queryWithTrackingCols(buildSql, params) {
+  try {
+    return await db.query(buildSql(TRACKING_COLS), params);
+  } catch (err) {
+    if (err.code !== '42703') throw err;
+    return db.query(buildSql(''), params);
+  }
+}
+
+// Suma a la orden lo que el frontend necesita para mostrar el seguimiento.
+const withTrackingInfo = (row) => (row ? {
+  ...row,
+  shipping_carrier_name: tracking.getCarrier(row.shipping_carrier)?.name || null,
+  tracking_url:          tracking.buildTrackingUrl(row.shipping_carrier, row.tracking_number),
+  tracking_status_label: tracking.statusLabel(row.tracking_status),
+} : row);
+
+// Alta del número en el proveedor de tracking, sin frenar la respuesta.
+function registerTrackerInBackground(orderId, saved, postalCode) {
+  tracking.registerTracker({
+    orderId,
+    trackingNumber: saved.tracking_number,
+    carrier:        saved.shipping_carrier,
+    postalCode,
+  }).then((r) => {
+    if (r.ok) {
+      return db.query('UPDATE orders SET tracking_provider_id = $1 WHERE id = $2', [r.trackerId, orderId]);
+    }
+    if (r.error) console.error(`[tracking] no se pudo registrar la orden #${orderId}: ${r.error}`);
+    return null;
+  }).catch(e => console.error('[tracking] registro falló:', e.message));
+}
 
 // ============================================================
 // Helper: valida los datos de envío que vienen al crear la orden
@@ -261,15 +302,14 @@ const getMyOrders = async (req, res) => {
   }
 
   try {
-    const result = await db.query(
-      `SELECT
+    const result = await queryWithTrackingCols(cols => `SELECT
          o.id, o.status, o.quantity, o.unit_price, o.total_price,
          o.currency, o.payment_method, o.payment_status,
          o.shipping_method, o.shipping_cost,
          o.shipping_recipient_name, o.shipping_phone,
          o.shipping_street, o.shipping_city, o.shipping_province,
          o.shipping_postal_code, o.shipping_notes,
-         o.tracking_number, o.dispatched_at, o.delivered_at,
+         o.tracking_number, o.dispatched_at, o.delivered_at, ${cols}
          o.notes, o.created_at, o.updated_at,
          p.title AS product_title, p.images AS product_images,
          p.pickup_address AS product_pickup_address,
@@ -283,7 +323,7 @@ const getMyOrders = async (req, res) => {
       [...params, limit, offset]
     );
 
-    res.json({ data: result.rows, page: parseInt(page), limit: parseInt(limit) });
+    res.json({ data: result.rows.map(withTrackingInfo), page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
     console.error('Error en getMyOrders:', err);
     res.status(500).json({ error: 'Error al obtener tus compras' });
@@ -307,15 +347,14 @@ const getMySales = async (req, res) => {
   }
 
   try {
-    const result = await db.query(
-      `SELECT
+    const result = await queryWithTrackingCols(cols => `SELECT
          o.id, o.status, o.quantity, o.unit_price, o.total_price,
          o.currency, o.payment_method, o.payment_status,
          o.shipping_method, o.shipping_cost,
          o.shipping_recipient_name, o.shipping_phone,
          o.shipping_street, o.shipping_city, o.shipping_province,
          o.shipping_postal_code, o.shipping_notes,
-         o.tracking_number, o.dispatched_at, o.delivered_at,
+         o.tracking_number, o.dispatched_at, o.delivered_at, ${cols}
          o.notes, o.created_at, o.updated_at,
          p.title AS product_title, p.images AS product_images,
          u.name  AS buyer_name, u.avatar_url AS buyer_avatar, u.phone AS buyer_phone
@@ -328,7 +367,7 @@ const getMySales = async (req, res) => {
       [...params, limit, offset]
     );
 
-    res.json({ data: result.rows, page: parseInt(page), limit: parseInt(limit) });
+    res.json({ data: result.rows.map(withTrackingInfo), page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
     console.error('Error en getMySales:', err);
     res.status(500).json({ error: 'Error al obtener tus ventas' });
@@ -368,7 +407,7 @@ const getOrderById = async (req, res) => {
       return res.status(403).json({ error: 'No tenés permiso para ver esta orden' });
     }
 
-    res.json(order);
+    res.json(withTrackingInfo(order));
   } catch (err) {
     console.error('Error en getOrderById:', err);
     res.status(500).json({ error: 'Error al obtener la orden' });
@@ -474,7 +513,14 @@ const updateOrderStatus = async (req, res) => {
       [status, id]
     );
 
-    res.json({ message: 'Estado actualizado', order: result.rows[0] });
+    if (status === 'delivered') {
+      // Best-effort (migration 016): para el escrow no vale lo mismo una
+      // entrega que marcó el vendedor que una que confirmó el correo.
+      db.query("UPDATE orders SET delivered_source = COALESCE(delivered_source, 'seller') WHERE id = $1", [id])
+        .catch(() => {});
+    }
+
+    res.json({ message: 'Estado actualizado', order: withTrackingInfo(result.rows[0]) });
   } catch (err) {
     console.error('Error en updateOrderStatus:', err);
     res.status(500).json({ error: 'Error al actualizar estado' });
@@ -490,7 +536,7 @@ const updateOrderStatus = async (req, res) => {
 // ============================================================
 const updateShippingTracking = async (req, res) => {
   const { id } = req.params;
-  const { tracking_number, mark_shipped } = req.body;
+  const { tracking_number, mark_shipped, carrier } = req.body;
 
   if (tracking_number !== undefined && tracking_number !== null) {
     if (typeof tracking_number !== 'string' || tracking_number.trim().length === 0) {
@@ -500,10 +546,17 @@ const updateShippingTracking = async (req, res) => {
       return res.status(400).json({ error: 'tracking_number es demasiado largo (máx 80)' });
     }
   }
+  if (carrier !== undefined && carrier !== null && !tracking.isValidCarrier(carrier)) {
+    return res.status(400).json({
+      error:   'Correo inválido',
+      allowed: tracking.listCarriers().map(c => c.slug),
+    });
+  }
 
   try {
     const check = await db.query(
-      `SELECT seller_id, status, payment_status, shipping_method
+      `SELECT seller_id, status, payment_status, shipping_method,
+              tracking_number, shipping_postal_code
        FROM orders WHERE id = $1`,
       [id]
     );
@@ -521,30 +574,67 @@ const updateShippingTracking = async (req, res) => {
       });
     }
 
+    const newNumber     = tracking_number ? tracking_number.trim() : null;
+    const numberChanged = !!newNumber && newNumber !== (order.tracking_number || '');
     const willShip = !!mark_shipped && order.status !== 'shipped' && order.status !== 'delivered';
 
-    const result = await db.query(
-      `UPDATE orders SET
-         tracking_number = COALESCE($1, tracking_number),
-         status          = CASE WHEN $2::boolean THEN 'shipped' ELSE status END,
-         dispatched_at   = CASE
-                             WHEN $2::boolean AND dispatched_at IS NULL
-                             THEN NOW() ELSE dispatched_at
-                           END,
-         updated_at      = NOW()
-       WHERE id = $3
-       RETURNING *`,
-      [tracking_number ? tracking_number.trim() : null, willShip, id]
-    );
+    let result;
+    try {
+      // Si cambia el número, los estados del número anterior ya no aplican.
+      result = await db.query(
+        `UPDATE orders SET
+           tracking_number      = COALESCE($1, tracking_number),
+           shipping_carrier     = COALESCE($4, shipping_carrier),
+           tracking_status      = CASE WHEN $5::boolean THEN NULL ELSE tracking_status END,
+           tracking_status_at   = CASE WHEN $5::boolean THEN NULL ELSE tracking_status_at END,
+           tracking_provider_id = CASE WHEN $5::boolean THEN NULL ELSE tracking_provider_id END,
+           status          = CASE WHEN $2::boolean THEN 'shipped' ELSE status END,
+           dispatched_at   = CASE
+                               WHEN $2::boolean AND dispatched_at IS NULL
+                               THEN NOW() ELSE dispatched_at
+                             END,
+           updated_at      = NOW()
+         WHERE id = $3
+         RETURNING *`,
+        [newNumber, willShip, id, carrier || null, numberChanged]
+      );
+      if (numberChanged) {
+        await db.query('DELETE FROM order_tracking_events WHERE order_id = $1', [id]);
+      }
+    } catch (err) {
+      if (err.code !== '42703' && err.code !== '42P01') throw err;
+      // Migration 016 pendiente: guardamos lo de siempre, sin correo.
+      result = await db.query(
+        `UPDATE orders SET
+           tracking_number = COALESCE($1, tracking_number),
+           status          = CASE WHEN $2::boolean THEN 'shipped' ELSE status END,
+           dispatched_at   = CASE
+                               WHEN $2::boolean AND dispatched_at IS NULL
+                               THEN NOW() ELSE dispatched_at
+                             END,
+           updated_at      = NOW()
+         WHERE id = $3
+         RETURNING *`,
+        [newNumber, willShip, id]
+      );
+    }
 
-    // Si efectivamente pasó a 'shipped' ahora, mandar email al comprador.
+    const saved = result.rows[0];
+
     if (willShip) {
       sendShippedNotification(id).catch(e =>
         console.error('[email] shipped notify failed:', e.message)
       );
     }
 
-    res.json({ message: 'Envío actualizado', order: result.rows[0] });
+    // Tracking automático (solo si hay SHIP24_API_KEY): el alta es idempotente
+    // del lado del proveedor, así que reintentar al editar no duplica nada.
+    if (saved && saved.tracking_number && tracking.isEnabled()
+        && (numberChanged || carrier || !saved.tracking_provider_id)) {
+      registerTrackerInBackground(id, saved, order.shipping_postal_code);
+    }
+
+    res.json({ message: 'Envío actualizado', order: withTrackingInfo(saved) });
   } catch (err) {
     console.error('Error en updateShippingTracking:', err);
     res.status(500).json({ error: 'Error al actualizar el envío' });
@@ -555,8 +645,7 @@ const updateShippingTracking = async (req, res) => {
 // Helper: dispara email "tu pedido fue despachado" al comprador
 // ============================================================
 async function sendShippedNotification(orderId) {
-  const r = await db.query(
-    `SELECT o.id, o.tracking_number,
+  const r = await queryWithTrackingCols(cols => `SELECT o.id, o.tracking_number, ${cols ? 'o.shipping_carrier,' : ''}
             p.title AS product_title,
             ub.email AS buyer_email, ub.name AS buyer_name,
             us.name AS seller_name
@@ -577,6 +666,8 @@ async function sendShippedNotification(orderId) {
     productTitle:   o.product_title,
     trackingNumber: o.tracking_number,
     sellerName:     o.seller_name,
+    carrierName:    tracking.getCarrier(o.shipping_carrier)?.name || null,
+    trackingUrl:    tracking.buildTrackingUrl(o.shipping_carrier, o.tracking_number),
   });
   await sendEmail({ to: o.buyer_email, subject: tpl.subject, html: tpl.html, text: tpl.text });
 }
@@ -617,6 +708,8 @@ const confirmDelivery = async (req, res) => {
         WHERE id = $1 RETURNING *`,
       [id]
     );
+    db.query("UPDATE orders SET delivered_source = COALESCE(delivered_source, 'buyer') WHERE id = $1", [id])
+      .catch(() => {});
     res.json({ message: 'Recepción confirmada — el pago del vendedor queda habilitado para liberarse', order: result.rows[0] });
   } catch (err) {
     if (err.code === '42703' || err.code === '42P01') {
@@ -630,4 +723,5 @@ const confirmDelivery = async (req, res) => {
 module.exports = {
   createOrder, getMyOrders, getMySales, getOrderById,
   updateOrderStatus, updateShippingTracking, confirmDelivery,
+  sendShippedNotification,
 };

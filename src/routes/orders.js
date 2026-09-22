@@ -9,6 +9,7 @@ const {
   updateShippingTracking,
   confirmDelivery,
 } = require('../controllers/ordersController');
+const { getOrderTracking }      = require('../controllers/trackingController');
 const authMiddleware            = require('../middleware/auth');
 const { createLimiter }         = require('../middleware/rateLimiter');
 
@@ -26,6 +27,9 @@ router.get('/sales', getMySales);
 
 // GET    /orders/:id         — Detalle de una orden
 router.get('/:id', getOrderById);
+
+// GET    /orders/:id/tracking  — Seguimiento del envío (correo, link, estados)
+router.get('/:id/tracking', getOrderTracking);
 
 // PATCH  /orders/:id/status    — Actualizar estado de una orden
 router.patch('/:id/status', updateOrderStatus);

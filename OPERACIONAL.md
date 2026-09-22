@@ -40,6 +40,7 @@ Guía rápida para mantener el marketplace en marcha. Audiencia: **vos** (Gastó
 | **Resend** | Emails transaccionales | Graciano | `RESEND_API_KEY` env var |
 | **Mercado Pago** | Pagos (sandbox hoy) | A definir (dueño) | `MP_ACCESS_TOKEN` (`TEST-` hoy) |
 | **Google OAuth** | Sign-in con Google | Graciano | `GOOGLE_CLIENT_ID` env var |
+| **Ship24** | Tracking de envíos (webhook de estados) | A definir | `SHIP24_API_KEY` + `SHIP24_WEBHOOK_SECRET` env vars (opcional: sin ellas solo hay link al correo) |
 | **Sentry** | Error tracking | A definir | `SENTRY_DSN_BACKEND` (set OK) |
 | **UptimeRobot** | Monitoreo uptime | Graciano | UI propia, sin var |
 | **GitHub** | Repos de código | `gastoncge/Dale-Deal` (frontend), `gracianoponce/daledeal-backend` (backend) | PAT user-scoped |
@@ -97,6 +98,7 @@ Guía rápida para mantener el marketplace en marcha. Audiencia: **vos** (Gastó
 | `JWT_SECRET` | Railway → backend service → Variables → editar | Sí, pero **invalida todas las sesiones activas** |
 | `MP_ACCESS_TOKEN` | MP panel → Credenciales → Regenerar | Manualmente actualizar Railway var |
 | `RESEND_API_KEY` | Resend dashboard → API keys → Revoke + Create | Manualmente actualizar Railway var |
+| `SHIP24_API_KEY` / `SHIP24_WEBHOOK_SECRET` | Ship24 dashboard → Integrations → API keys / Webhooks | Manualmente actualizar Railway var |
 | `GOOGLE_CLIENT_ID` | Google Cloud Console → Credentials | Update Railway + JS/utils.js |
 | `SENTRY_DSN_*` | Sentry → Project → Settings → Client Keys → Revoke + Create | Update Railway var (backend) o JS/utils.js (frontend) |
 

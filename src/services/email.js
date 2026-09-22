@@ -245,7 +245,7 @@ function paymentFailedBuyerTemplate({ buyerName, orderId, productTitle, reason }
   };
 }
 
-function orderShippedBuyerTemplate({ buyerName, orderId, productTitle, trackingNumber, sellerName }) {
+function orderShippedBuyerTemplate({ buyerName, orderId, productTitle, trackingNumber, sellerName, carrierName, trackingUrl }) {
   const inner = `
     <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">📦 Tu pedido fue despachado</h2>
     <p>Hola${buyerName ? ' ' + escapeHtml(buyerName) : ''},</p>
@@ -256,7 +256,13 @@ function orderShippedBuyerTemplate({ buyerName, orderId, productTitle, trackingN
       <tr><td style="font-size:13px;color:#0369a1;padding-bottom:6px;">Número de seguimiento</td></tr>
       <tr><td style="font-size:20px;font-weight:700;color:#0c4a6e;letter-spacing:1px;">${escapeHtml(trackingNumber)}</td></tr>
     </table>
-    <p style="font-size:13px;color:#6b7280;">Usá este número en la web del courier que el vendedor utilizó (Correo Argentino, Andreani, OCA, etc.) para ver el progreso.</p>
+    ${carrierName
+      ? `<p style="font-size:14px;color:#374151;text-align:center;">Despachado por <strong>${escapeHtml(carrierName)}</strong></p>`
+      : ''}
+    ${trackingUrl
+      ? `<p style="text-align:center;margin:18px 0 6px;">${btn('Seguir mi envío', trackingUrl)}</p>
+         <p style="font-size:13px;color:#6b7280;text-align:center;">Si la página del correo te pide el número, es el de arriba.</p>`
+      : '<p style="font-size:13px;color:#6b7280;">Usá este número en la web del courier que el vendedor utilizó (Correo Argentino, Andreani, OCA, etc.) para ver el progreso.</p>'}
     ` : '<p style="font-size:13px;color:#6b7280;">El vendedor todavía no cargó el número de seguimiento. Lo vas a poder ver en "Mis compras" cuando esté disponible.</p>'}
 
     <p style="text-align:center;margin:28px 0;">${btn('Ver mi pedido', 'https://daledeal.com.ar/HTML/notificaciones.html#mis-compras')}</p>
@@ -264,7 +270,25 @@ function orderShippedBuyerTemplate({ buyerName, orderId, productTitle, trackingN
   return {
     subject: `📦 Tu pedido fue despachado · Orden #${orderId}`,
     html:    emailWrap(inner, { title: 'Pedido despachado' }),
-    text:    `Tu pedido #${orderId} fue despachado.\n${trackingNumber ? 'Tracking: ' + trackingNumber + '\n' : ''}\nVer detalles: https://daledeal.com.ar/HTML/notificaciones.html#mis-compras`,
+    text:    `Tu pedido #${orderId} fue despachado${carrierName ? ' por ' + carrierName : ''}.\n${trackingNumber ? 'Tracking: ' + trackingNumber + '\n' : ''}${trackingUrl ? 'Seguilo acá: ' + trackingUrl + '\n' : ''}\nVer detalles: https://daledeal.com.ar/HTML/notificaciones.html#mis-compras`,
+  };
+}
+
+// El correo confirmó la entrega (webhook de tracking). Le pedimos al comprador
+// que confirme la recepción: eso libera el pago retenido sin esperar los 7 días.
+function orderDeliveredBuyerTemplate({ buyerName, orderId, productTitle, carrierName }) {
+  const inner = `
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">✅ Tu pedido fue entregado</h2>
+    <p>Hola${buyerName ? ' ' + escapeHtml(buyerName) : ''},</p>
+    <p>${escapeHtml(carrierName || 'El correo')} nos informó que entregó tu orden <strong>#${orderId}</strong>: <strong>${escapeHtml(productTitle || '—')}</strong>.</p>
+    <p>Si está todo bien, confirmá que lo recibiste. Tu plata sigue protegida: si hay algún problema, avisanos antes de confirmar y lo resolvemos.</p>
+    <p style="text-align:center;margin:28px 0;">${btn('Confirmar que lo recibí', 'https://daledeal.com.ar/HTML/notificaciones.html#mis-compras')}</p>
+    <p style="font-size:13px;color:#6b7280;">¿No te llegó nada? Respondé este mail o escribinos desde el Centro de ayuda y frenamos el pago al vendedor.</p>
+  `;
+  return {
+    subject: `✅ Tu pedido fue entregado · Orden #${orderId}`,
+    html:    emailWrap(inner, { title: 'Pedido entregado' }),
+    text:    `${carrierName || 'El correo'} informó que entregó tu pedido #${orderId}.\nConfirmá la recepción o avisanos si hubo un problema: https://daledeal.com.ar/HTML/notificaciones.html#mis-compras`,
   };
 }
 
@@ -331,6 +355,7 @@ module.exports = {
   orderPaidBuyerTemplate,
   newSaleSellerTemplate,
   orderShippedBuyerTemplate,
+  orderDeliveredBuyerTemplate,
   paymentFailedBuyerTemplate,
   welcomeEmailTemplate,
 };
