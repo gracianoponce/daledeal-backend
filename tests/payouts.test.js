@@ -221,3 +221,15 @@ describe('GET /orders/sales → estado del cobro', () => {
     expect(sqls[1]).not.toMatch(/payouts/);
   });
 });
+
+// ------------------------------------------------------------
+describe("GET /orders/my → la compra sabe si el pago ya se liberó", () => {
+  test("incluye release_status en el grupo con fallback", async () => {
+    const sqls = [];
+    db.query.mockImplementation(async (sql) => { sqls.push(sql); return { rowCount: 1, rows: [{ id: 9, status: "delivered", release_status: "released" }] }; });
+    const res = await request(app).get("/orders/my").set("Authorization", `Bearer ${tokenFor(1)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data[0].release_status).toBe("released");
+    expect(sqls[0]).toMatch(/o\.release_status/);
+  });
+});

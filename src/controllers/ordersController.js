@@ -318,7 +318,7 @@ const getMyOrders = async (req, res) => {
          o.shipping_recipient_name, o.shipping_phone,
          o.shipping_street, o.shipping_city, o.shipping_province,
          o.shipping_postal_code, o.shipping_notes,
-         o.tracking_number, o.dispatched_at, o.delivered_at, ${cols}
+         o.tracking_number, o.dispatched_at, o.delivered_at, ${cols}${cols ? 'o.release_status,' : ''}
          o.notes, o.created_at, o.updated_at,
          p.title AS product_title, p.images AS product_images,
          p.pickup_address AS product_pickup_address,
