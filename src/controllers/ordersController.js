@@ -1,6 +1,7 @@
 const db = require('../config/database');
 const { findOrCreateConversation } = require('./messageController');
-const { sendEmail, orderShippedBuyerTemplate } = require('../services/email');
+const { sendEmail, orderShippedBuyerTemplate, buyerConfirmedSellerTemplate } = require('../services/email');
+const { RELEASABLE_SQL } = require('./payoutController');
 const { parsePagination } = require('../middleware/validate');
 const tracking = require('../services/tracking');
 
@@ -12,11 +13,18 @@ const tracking = require('../services/tracking');
 // buyer_confirmed_at es de la 015 (escrow): el comprador necesita saber si ya confirmó.
 const TRACKING_COLS = 'o.shipping_carrier, o.tracking_status, o.tracking_status_at, o.delivered_source, o.buyer_confirmed_at,';
 
+// Escrow (015) en "Mis ventas": en qué quedó la plata del vendedor. Va en el
+// mismo grupo con fallback que el tracking (sin la tabla payouts → 42P01).
+const SALES_ESCROW_COLS = `o.commission_amount, o.release_status, o.released_at,
+         ${RELEASABLE_SQL} AS releasable,
+         pay.net_amount AS payout_net, pay.reference AS payout_reference,`;
+
 async function queryWithTrackingCols(buildSql, params) {
   try {
     return await db.query(buildSql(TRACKING_COLS), params);
   } catch (err) {
-    if (err.code !== '42703') throw err;
+    // 42703 = falta una columna · 42P01 = falta una tabla (payouts, en Mis ventas)
+    if (err.code !== '42703' && err.code !== '42P01') throw err;
     return db.query(buildSql(''), params);
   }
 }
@@ -355,13 +363,14 @@ const getMySales = async (req, res) => {
          o.shipping_recipient_name, o.shipping_phone,
          o.shipping_street, o.shipping_city, o.shipping_province,
          o.shipping_postal_code, o.shipping_notes,
-         o.tracking_number, o.dispatched_at, o.delivered_at, ${cols}
+         o.tracking_number, o.dispatched_at, o.delivered_at, ${cols}${cols ? SALES_ESCROW_COLS : ''}
          o.notes, o.created_at, o.updated_at,
          p.title AS product_title, p.images AS product_images,
          u.name  AS buyer_name, u.avatar_url AS buyer_avatar, u.phone AS buyer_phone
        FROM orders o
        LEFT JOIN products p ON o.product_id = p.id
        LEFT JOIN users u    ON o.buyer_id   = u.id
+       ${cols ? 'LEFT JOIN payouts pay ON pay.order_id = o.id' : ''}
        WHERE o.seller_id = $1 ${whereExtra}
        ORDER BY o.created_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -674,6 +683,36 @@ async function sendShippedNotification(orderId) {
 }
 
 // ============================================================
+// Helper: avisa al vendedor que el comprador confirmó la recepción, así sabe
+// que su pago quedó listo para liberar (escrow 015). Solo si la orden está paga.
+// ============================================================
+async function notifySellerBuyerConfirmed(orderId) {
+  const r = await db.query(
+    `SELECT o.id, o.total_price, o.commission_amount, o.payment_status,
+            p.title AS product_title,
+            us.email AS seller_email, us.name AS seller_name,
+            ub.name AS buyer_name
+       FROM orders o
+       LEFT JOIN products p ON p.id = o.product_id
+       LEFT JOIN users us   ON us.id = o.seller_id
+       LEFT JOIN users ub   ON ub.id = o.buyer_id
+      WHERE o.id = $1`,
+    [orderId]
+  );
+  const o = r.rows[0];
+  if (!o || !o.seller_email || o.payment_status !== 'paid') return;
+  const net = Math.round(((parseFloat(o.total_price) || 0) - (parseFloat(o.commission_amount) || 0)) * 100) / 100;
+  const tpl = buyerConfirmedSellerTemplate({
+    sellerName:   o.seller_name,
+    orderId:      o.id,
+    productTitle: o.product_title,
+    buyerName:    o.buyer_name,
+    net,
+  });
+  await sendEmail({ to: o.seller_email, subject: tpl.subject, html: tpl.html, text: tpl.text });
+}
+
+// ============================================================
 // POST /orders/:id/confirm-delivery — el COMPRADOR confirma recepción
 // Dispara la liberación del pago retenido (escrow, migration 015).
 // Idempotente: si ya estaba confirmada, devuelve la orden tal cual.
@@ -711,6 +750,7 @@ const confirmDelivery = async (req, res) => {
     );
     db.query("UPDATE orders SET delivered_source = COALESCE(delivered_source, 'buyer') WHERE id = $1", [id])
       .catch(() => {});
+    notifySellerBuyerConfirmed(id).catch(e => console.error('[email] buyer-confirmed notify failed:', e.message));
     res.json({ message: 'Recepción confirmada — el pago del vendedor queda habilitado para liberarse', order: result.rows[0] });
   } catch (err) {
     if (err.code === '42703' || err.code === '42P01') {

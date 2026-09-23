@@ -9,6 +9,7 @@
  * Tolerante a migration 015 sin aplicar (42P01/42703 → respuesta suave).
  */
 const db = require('../config/database');
+const { sendEmail, payoutReleasedSellerTemplate } = require('../services/email');
 
 const RELEASE_DAYS = 7;
 const migPending = (err) => err.code === '42P01' || err.code === '42703';
@@ -135,6 +136,7 @@ async function releaseOrder(req, res) {
       [id]
     );
     await client.query('COMMIT');
+    notifySellerPayout(id, p.rows[0]).catch(e => console.error('[email] payout notify failed:', e.message));
     return res.status(201).json({ ok: true, payout: p.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -145,6 +147,31 @@ async function releaseOrder(req, res) {
   } finally {
     client.release();
   }
+}
+
+// Aviso al vendedor de que se liberó su pago. Nunca frena la liberación: si
+// el mail falla, el payout ya quedó registrado y se loguea el error.
+async function notifySellerPayout(orderId, payout) {
+  const r = await db.query(
+    `SELECT us.email AS seller_email, us.name AS seller_name, pr.title AS product_title
+       FROM orders o
+       JOIN users us ON us.id = o.seller_id
+       LEFT JOIN products pr ON pr.id = o.product_id
+      WHERE o.id = $1`,
+    [orderId]
+  );
+  const row = r.rows[0];
+  if (!row || !row.seller_email) return;
+  const tpl = payoutReleasedSellerTemplate({
+    sellerName:   row.seller_name,
+    orderId,
+    productTitle: row.product_title,
+    gross:        payout.gross_amount,
+    commission:   payout.commission_amount,
+    net:          payout.net_amount,
+    reference:    payout.reference,
+  });
+  await sendEmail({ to: row.seller_email, subject: tpl.subject, html: tpl.html, text: tpl.text });
 }
 
 // POST /admin/orders/:id/hold — frenar/desfrenar por reclamo
@@ -173,4 +200,4 @@ async function holdOrder(req, res) {
   }
 }
 
-module.exports = { listReleasable, listReleased, releaseOrder, holdOrder, RELEASE_DAYS };
+module.exports = { listReleasable, listReleased, releaseOrder, holdOrder, RELEASE_DAYS, RELEASABLE_SQL };

@@ -214,7 +214,7 @@ function newSaleSellerTemplate({ sellerName, orderId, productTitle, buyerName, t
       ${isPickup
         ? '<li>Coordiná con el comprador por chat para acordar fecha y hora.</li>'
         : '<li>Preparalo y despachalo en las próximas 48 hs.</li><li>Cuando tengas el número de tracking, cargalo en "Mis ventas" para notificar al comprador.</li>'}
-      <li>Una vez entregado, tu pago será liberado.</li>
+      <li>Tu pago queda protegido: lo liberamos cuando el comprador confirme que lo recibió, o a los 7 días de la entrega si no hay reclamos. Te avisamos por mail.</li>
     </ul>
 
     <p style="text-align:center;margin:28px 0;">${btn('Ir a Mis ventas', 'https://daledeal.com.ar/HTML/mis-ventas.html')}</p>
@@ -292,6 +292,50 @@ function orderDeliveredBuyerTemplate({ buyerName, orderId, productTitle, carrier
   };
 }
 
+// El admin liberó el pago (escrow 015): transfirió el neto por Mercado Pago y
+// registró el comprobante en el panel. Le avisamos al vendedor con el detalle.
+function payoutReleasedSellerTemplate({ sellerName, orderId, productTitle, gross, commission, net, reference }) {
+  const netFmt = formatARS(net);
+  const inner = `
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">💸 Te liberamos el pago</h2>
+    <p>Hola${sellerName ? ' ' + escapeHtml(sellerName) : ''},</p>
+    <p>Liberamos el pago de tu venta <strong>#${orderId}</strong>: <strong>${escapeHtml(productTitle || '—')}</strong>. Te transferimos el neto por Mercado Pago.</p>
+
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f0fdf4;border-radius:8px;padding:16px;margin:20px 0;border:1px solid #bbf7d0;">
+      <tr><td style="font-size:13px;color:#6b7280;padding-bottom:6px;">Total de la venta</td><td style="text-align:right;">${formatARS(gross)}</td></tr>
+      <tr><td style="font-size:13px;color:#6b7280;padding-bottom:6px;">Comisión Dale Deal</td><td style="text-align:right;">− ${formatARS(commission)}</td></tr>
+      <tr><td style="font-size:14px;font-weight:600;color:#166534;">Neto transferido</td><td style="text-align:right;font-size:18px;font-weight:700;color:#16a34a;">${netFmt}</td></tr>
+      ${reference ? `<tr><td style="font-size:13px;color:#6b7280;padding-top:8px;">Comprobante de Mercado Pago</td><td style="text-align:right;padding-top:8px;font-family:monospace;">${escapeHtml(reference)}</td></tr>` : ''}
+    </table>
+
+    <p style="font-size:13px;color:#6b7280;">Si no lo ves acreditado en tu cuenta, respondé este mail${reference ? ' con el número de comprobante' : ''} y lo revisamos.</p>
+    <p style="text-align:center;margin:28px 0;">${btn('Ver mis ventas', 'https://daledeal.com.ar/mis-ventas')}</p>
+  `;
+  return {
+    subject: `💸 Te liberamos el pago · Orden #${orderId}`,
+    html:    emailWrap(inner, { title: 'Pago liberado' }),
+    text:    `Liberamos el pago de tu venta #${orderId}${productTitle ? ' (' + productTitle + ')' : ''}.\nNeto transferido: ${netFmt} (total ${formatARS(gross)} menos comisión ${formatARS(commission)}).\n${reference ? 'Comprobante de Mercado Pago: ' + reference + '\n' : ''}\nTus ventas: https://daledeal.com.ar/mis-ventas`,
+  };
+}
+
+// El comprador confirmó que recibió el producto: la plata del vendedor queda
+// lista para liberar (escrow 015). Así el vendedor sabe que ya cobra.
+function buyerConfirmedSellerTemplate({ sellerName, orderId, productTitle, buyerName, net }) {
+  const netFmt = formatARS(net);
+  const inner = `
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">✅ Confirmaron que recibieron tu venta</h2>
+    <p>Hola${sellerName ? ' ' + escapeHtml(sellerName) : ''},</p>
+    <p><strong>${escapeHtml(buyerName || 'El comprador')}</strong> confirmó que recibió <strong>${escapeHtml(productTitle || 'tu producto')}</strong> (orden <strong>#${orderId}</strong>).</p>
+    <p>Tu pago de <strong>${netFmt}</strong> ya está listo para liberar. Te lo transferimos por Mercado Pago a la brevedad y te mandamos el comprobante por mail.</p>
+    <p style="text-align:center;margin:28px 0;">${btn('Ver mis ventas', 'https://daledeal.com.ar/mis-ventas')}</p>
+  `;
+  return {
+    subject: `✅ Confirmaron la recepción · Orden #${orderId}`,
+    html:    emailWrap(inner, { title: 'Recepción confirmada' }),
+    text:    `${buyerName || 'El comprador'} confirmó que recibió tu venta #${orderId}${productTitle ? ' (' + productTitle + ')' : ''}.\nTu pago de ${netFmt} queda listo para liberar: te lo transferimos a la brevedad y te mandamos el comprobante.\nTus ventas: https://daledeal.com.ar/mis-ventas`,
+  };
+}
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -356,6 +400,8 @@ module.exports = {
   newSaleSellerTemplate,
   orderShippedBuyerTemplate,
   orderDeliveredBuyerTemplate,
+  payoutReleasedSellerTemplate,
+  buyerConfirmedSellerTemplate,
   paymentFailedBuyerTemplate,
   welcomeEmailTemplate,
 };
