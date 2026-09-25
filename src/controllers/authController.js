@@ -6,6 +6,15 @@ const { validateEmail, validatePassword } = require('../middleware/validate');
 const { sendEmail, passwordResetTemplate, welcomeEmailTemplate } = require('../services/email');
 const { OAuth2Client } = require('google-auth-library');
 
+// Lo que nunca sale en la respuesta del login: el hash y los datos de cobro
+// (financieros; se consultan aparte en GET /users/me/payout-account).
+const PRIVATE_USER_FIELDS = ['password_hash', 'payout_account', 'payout_holder', 'payout_updated_at'];
+const toSafeUser = (row) => {
+  const u = { ...row };
+  PRIVATE_USER_FIELDS.forEach(k => { delete u[k]; });
+  return u;
+};
+
 // Cliente de Google reutilizado entre requests. Lo inicializamos lazy
 // porque el GOOGLE_CLIENT_ID puede no estar seteado en dev local.
 let googleClient = null;
@@ -105,7 +114,7 @@ const login = async (req, res) => {
     }
 
     const token = generateToken(user);
-    const { password_hash, ...userSafe } = user;
+    const userSafe = toSafeUser(user);
 
     res.json({ token, user: userSafe });
   } catch (err) {
@@ -438,7 +447,7 @@ const googleAuth = async (req, res) => {
     }
 
     const token = generateToken(userRow);
-    const { password_hash, ...userSafe } = userRow;
+    const userSafe = toSafeUser(userRow);
 
     // Welcome email solo para usuarios NUEVOS (no en cada login con Google).
     // Fire and forget — el email no debe bloquear la respuesta.

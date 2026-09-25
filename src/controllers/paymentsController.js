@@ -484,18 +484,24 @@ const handleWebhook = async (req, res) => {
 // "tenés una venta nueva" (al vendedor).
 // ============================================================
 async function sendOrderPaidEmails(orderId) {
-  const r = await db.query(
-    `SELECT o.id, o.total_price, o.shipping_method, o.shipping_city,
+  // Con los datos de cobro del vendedor (017) para recordarle cargarlos;
+  // si la migration no está, la misma query sin esa columna.
+  const sql = withPayout => `SELECT o.id, o.total_price, o.shipping_method, o.shipping_city,
             p.title AS product_title,
             ub.email AS buyer_email,  ub.name AS buyer_name,
-            us.email AS seller_email, us.name AS seller_name
+            us.email AS seller_email, us.name AS seller_name${withPayout ? ', us.payout_account AS seller_payout_account' : ''}
        FROM orders o
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN users ub   ON ub.id = o.buyer_id
        LEFT JOIN users us   ON us.id = o.seller_id
-      WHERE o.id = $1`,
-    [orderId]
-  );
+      WHERE o.id = $1`;
+  let r;
+  try {
+    r = await db.query(sql(true), [orderId]);
+  } catch (err) {
+    if (err.code !== '42703') throw err;
+    r = await db.query(sql(false), [orderId]);
+  }
   if (r.rows.length === 0) return;
   const o = r.rows[0];
   const isPickup = o.shipping_method === 'pickup';
@@ -524,6 +530,7 @@ async function sendOrderPaidEmails(orderId) {
       total:        o.total_price,
       isPickup,
       shippingCity: o.shipping_city,
+      needsPayoutAccount: 'seller_payout_account' in o && !o.seller_payout_account,
     });
     sendEmail({ to: o.seller_email, subject: tpl.subject, html: tpl.html, text: tpl.text })
       .catch(e => console.error('[email] seller notify failed:', e.message));

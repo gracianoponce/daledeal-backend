@@ -687,18 +687,22 @@ async function sendShippedNotification(orderId) {
 // que su pago quedó listo para liberar (escrow 015). Solo si la orden está paga.
 // ============================================================
 async function notifySellerBuyerConfirmed(orderId) {
-  const r = await db.query(
-    `SELECT o.id, o.total_price, o.commission_amount, o.payment_status,
+  const sql = withPayout => `SELECT o.id, o.total_price, o.commission_amount, o.payment_status,
             p.title AS product_title,
             us.email AS seller_email, us.name AS seller_name,
-            ub.name AS buyer_name
+            ub.name AS buyer_name${withPayout ? ', us.payout_account AS seller_payout_account' : ''}
        FROM orders o
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN users us   ON us.id = o.seller_id
        LEFT JOIN users ub   ON ub.id = o.buyer_id
-      WHERE o.id = $1`,
-    [orderId]
-  );
+      WHERE o.id = $1`;
+  let r;
+  try {
+    r = await db.query(sql(true), [orderId]);
+  } catch (err) {
+    if (err.code !== '42703') throw err;
+    r = await db.query(sql(false), [orderId]);
+  }
   const o = r.rows[0];
   if (!o || !o.seller_email || o.payment_status !== 'paid') return;
   const net = Math.round(((parseFloat(o.total_price) || 0) - (parseFloat(o.commission_amount) || 0)) * 100) / 100;
@@ -708,6 +712,7 @@ async function notifySellerBuyerConfirmed(orderId) {
     productTitle: o.product_title,
     buyerName:    o.buyer_name,
     net,
+    needsPayoutAccount: 'seller_payout_account' in o && !o.seller_payout_account,
   });
   await sendEmail({ to: o.seller_email, subject: tpl.subject, html: tpl.html, text: tpl.text });
 }

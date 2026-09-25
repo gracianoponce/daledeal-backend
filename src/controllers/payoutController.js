@@ -10,6 +10,7 @@
  */
 const db = require('../config/database');
 const { sendEmail, payoutReleasedSellerTemplate } = require('../services/email');
+const { describePayoutAccount } = require('../services/payoutAccount');
 
 const RELEASE_DAYS = 7;
 const migPending = (err) => err.code === '42P01' || err.code === '42703';
@@ -19,10 +20,26 @@ const clip = (v, max = 300) => (typeof v === 'string' ? v.trim().slice(0, max) :
 const RELEASABLE_SQL = `(o.buyer_confirmed_at IS NOT NULL
   OR (o.delivered_at IS NOT NULL AND o.delivered_at < NOW() - INTERVAL '${RELEASE_DAYS} days'))`;
 
+// Datos de cobro del vendedor (migration 017) para el modal de liberación.
+const SELLER_PAYOUT_COLS = `us.payout_account AS seller_payout_account,
+              us.payout_holder AS seller_payout_holder,
+              us.payout_updated_at AS seller_payout_updated_at,`;
+
+// Corre la query con las columnas de la 017; si todavía no existen (42703),
+// la repite sin ellas.
+async function queryWithPayoutCols(buildSql, params) {
+  try {
+    return await db.query(buildSql(true), params);
+  } catch (err) {
+    if (err.code !== '42703') throw err;
+    return db.query(buildSql(false), params);
+  }
+}
+
 // GET /admin/payouts/pending — cola de retenciones (liberables primero)
 async function listReleasable(req, res) {
   try {
-    const r = await db.query(
+    const r = await queryWithPayoutCols(withPayout =>
       `SELECT o.id, o.total_price, o.commission_amount, o.currency, o.status,
               o.paid_at, o.delivered_at, o.buyer_confirmed_at, o.release_status,
               o.delivered_source, o.shipping_method,
@@ -30,6 +47,7 @@ async function listReleasable(req, res) {
               ${RELEASABLE_SQL} AS releasable,
               p.title AS product_title,
               us.id AS seller_id, us.name AS seller_name, us.email AS seller_email,
+              ${withPayout ? SELLER_PAYOUT_COLS : ''}
               ub.name AS buyer_name
          FROM orders o
          LEFT JOIN products p ON p.id = o.product_id
@@ -51,9 +69,10 @@ async function listReleasable(req, res) {
 async function listReleased(req, res) {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
-    const r = await db.query(
+    const r = await queryWithPayoutCols(withPayout =>
       `SELECT p.id AS payout_id, p.order_id, p.gross_amount, p.commission_amount, p.net_amount,
               p.currency, p.method, p.reference, p.note, p.created_at,
+              ${withPayout ? 'p.destination,' : ''}
               o.status, o.delivered_at, o.buyer_confirmed_at, o.released_at, o.delivered_source,
               pr.title AS product_title,
               us.id AS seller_id, us.name AS seller_name, us.email AS seller_email,
@@ -152,8 +171,9 @@ async function releaseOrder(req, res) {
 // Aviso al vendedor de que se liberó su pago. Nunca frena la liberación: si
 // el mail falla, el payout ya quedó registrado y se loguea el error.
 async function notifySellerPayout(orderId, payout) {
-  const r = await db.query(
+  const r = await queryWithPayoutCols(withPayout =>
     `SELECT us.email AS seller_email, us.name AS seller_name, pr.title AS product_title
+            ${withPayout ? ', us.payout_account, us.payout_holder' : ''}
        FROM orders o
        JOIN users us ON us.id = o.seller_id
        LEFT JOIN products pr ON pr.id = o.product_id
@@ -161,7 +181,17 @@ async function notifySellerPayout(orderId, payout) {
     [orderId]
   );
   const row = r.rows[0];
-  if (!row || !row.seller_email) return;
+  if (!row) return;
+
+  // Auditoría: a qué cuenta de cobro se liberó (por si después la cambia).
+  const d = describePayoutAccount(row.payout_account);
+  const destination = d ? `${d.label}${row.payout_holder ? ' · ' + row.payout_holder : ''}`.slice(0, 160) : null;
+  if (destination) {
+    await db.query('UPDATE payouts SET destination = $1 WHERE id = $2 AND destination IS NULL', [destination, payout.id])
+      .catch(e => console.error('[payouts] destination:', e.message));
+  }
+
+  if (!row.seller_email) return;
   const tpl = payoutReleasedSellerTemplate({
     sellerName:   row.seller_name,
     orderId,
@@ -170,6 +200,7 @@ async function notifySellerPayout(orderId, payout) {
     commission:   payout.commission_amount,
     net:          payout.net_amount,
     reference:    payout.reference,
+    destination,
   });
   await sendEmail({ to: row.seller_email, subject: tpl.subject, html: tpl.html, text: tpl.text });
 }
