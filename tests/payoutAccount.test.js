@@ -259,3 +259,16 @@ describe('mails: recordatorio de cargar los datos de cobro', () => {
     expect(t.html).toMatch(/No fuiste vos/);
   });
 });
+
+// ------------------------------------------------------------
+describe("GET /users/me (perfil)", () => {
+  test("no pide la columna email_verified, que no existe (daba 500 en producción)", async () => {
+    db.query.mockResolvedValue({ rowCount: 1, rows: [{ id: 9, name: "Juan", email: "vende@test.com", email_verified: false, auth_provider: "email" }] });
+    const res = await request(app).get("/users/me").set("Authorization", `Bearer ${tokenFor(9)}`);
+    expect(res.status).toBe(200);
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toMatch(/\(google_id IS NOT NULL\) AS email_verified/);
+    expect(sql).not.toMatch(/,\s*email_verified,/);
+    expect(res.body).not.toHaveProperty("payout_account");
+  });
+});

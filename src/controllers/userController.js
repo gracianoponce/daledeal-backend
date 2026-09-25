@@ -53,8 +53,11 @@ const getUserById = async (req, res) => {
 const getMyProfile = async (req, res) => {
   try {
     const result = await db.query(
+      // email_verified no existe como columna (nunca hubo migration): en producción
+      // este SELECT daba 500 y Mi cuenta mostraba "No pudimos cargar tu perfil".
+      // Google verifica el mail en su login; con mail y contraseña no hay verificación.
       `SELECT id, name, email, phone, location, avatar_url, role,
-              email_verified, created_at, updated_at,
+              (google_id IS NOT NULL) AS email_verified, created_at, updated_at,
               CASE WHEN google_id IS NOT NULL THEN 'google' ELSE 'email' END AS auth_provider
        FROM users WHERE id = $1`,
       [req.user.id]
