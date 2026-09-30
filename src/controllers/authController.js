@@ -156,7 +156,9 @@ const changePassword = async (req, res) => {
     }
 
     const isMatch = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
-    if (!isMatch) return res.status(401).json({ error: 'Contraseña actual incorrecta' });
+    // 400 y no 401: la sesión es válida, lo que está mal es un dato del formulario.
+    // Con 401 el frontend (apiFetch) la toma como sesión vencida y te deslogea.
+    if (!isMatch) return res.status(400).json({ error: 'Contraseña actual incorrecta' });
 
     const newHash = await bcrypt.hash(newPassword, 12);
     await db.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [newHash, req.user.id]);
@@ -208,7 +210,7 @@ const deactivateAccount = async (req, res) => {
     // sesión válida (la desactivación se revierte desde soporte).
     const hash = result.rows[0].password_hash;
     if (hash && !(await bcrypt.compare(password, hash))) {
-      return res.status(401).json({ error: 'Contraseña incorrecta' });
+      return res.status(400).json({ error: 'Contraseña incorrecta' });  // 400: ver changePassword
     }
 
     await db.query('UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1', [req.user.id]);

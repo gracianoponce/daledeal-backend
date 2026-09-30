@@ -448,3 +448,25 @@ describe('vencimiento de órdenes sin pagar', () => {
     expect(client.sqls.map(q => q.sql)).toContain('ROLLBACK');
   });
 });
+
+// ------------------------------------------------------------
+describe('cambio de contraseña', () => {
+  const bcrypt = require('bcryptjs');
+
+  test('contraseña actual incorrecta → 400 (no 401: el front te deslogeaba)', async () => {
+    const hash = await bcrypt.hash('Correcta123', 4);
+    db.query.mockImplementation(async (sql) => (/SELECT password_hash FROM users/i.test(sql) ? { rowCount: 1, rows: [{ password_hash: hash }] } : { rowCount: 0, rows: [] }));
+    const res = await request(app).post('/auth/change-password').set('Authorization', `Bearer ${tokenFor(7)}`)
+      .send({ currentPassword: 'Otra12345', newPassword: 'Nueva12345' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/actual incorrecta/);
+  });
+
+  test('cuenta de Google sin contraseña → 400 con explicación', async () => {
+    db.query.mockImplementation(async (sql) => (/SELECT password_hash FROM users/i.test(sql) ? { rowCount: 1, rows: [{ password_hash: null }] } : { rowCount: 0, rows: [] }));
+    const res = await request(app).post('/auth/change-password').set('Authorization', `Bearer ${tokenFor(7)}`)
+      .send({ currentPassword: 'Algo12345', newPassword: 'Nueva12345' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Google/);
+  });
+});
