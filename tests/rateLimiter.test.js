@@ -60,4 +60,16 @@ describe('rateLimiter', () => {
     _resetStoreForTests();
     await request(app).post('/login').expect(200);
   });
+
+  test('keyGenerator: login por IP + email (con CGNAT no se bloquean entre usuarios)', async () => {
+    const app = express();
+    app.use(express.json());
+    const byEmail = createRateLimiter({ windowMs: 60_000, max: 2, keyGenerator: (req) => `${req.ip}|${req.body.email}` });
+    app.post('/login', byEmail, (req, res) => res.json({ ok: true }));
+    await request(app).post('/login').send({ email: 'a@x.com' }).expect(200);
+    await request(app).post('/login').send({ email: 'a@x.com' }).expect(200);
+    await request(app).post('/login').send({ email: 'a@x.com' }).expect(429);
+    // Otra persona detrás de la misma IP sigue pudiendo entrar
+    await request(app).post('/login').send({ email: 'b@x.com' }).expect(200);
+  });
 });

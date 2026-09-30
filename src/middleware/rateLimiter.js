@@ -33,15 +33,16 @@ setInterval(() => {
  * @param {number} options.windowMs  - Ventana de tiempo en ms (default: 15 min)
  * @param {number} options.max       - Máximo de requests en la ventana (default: 100)
  * @param {string} options.message   - Mensaje de error (default genérico)
+ * @param {function} [options.keyGenerator] - req → clave (default: la IP)
  */
-function createRateLimiter({ windowMs = 15 * 60 * 1000, max = 100, message } = {}) {
+function createRateLimiter({ windowMs = 15 * 60 * 1000, max = 100, message, keyGenerator } = {}) {
   const defaultMessage = `Demasiadas solicitudes. Intentá de nuevo en ${Math.round(windowMs / 60000)} minutos.`;
   const store = new Map();
   stores.add(store);
 
   return function rateLimiterMiddleware(req, res, next) {
     // Identificar por IP (y opcionalmente por usuario si está autenticado)
-    const key = req.ip || req.connection.remoteAddress;
+    const key = keyGenerator ? keyGenerator(req) : (req.ip || req.connection.remoteAddress);
     const now = Date.now();
 
     let record = store.get(key);
@@ -74,17 +75,28 @@ function createRateLimiter({ windowMs = 15 * 60 * 1000, max = 100, message } = {
 module.exports = {
   createRateLimiter,
 
-  // Muy estricto para rutas de autenticación (previene fuerza bruta)
+  // Muy estricto para rutas de autenticación (previene fuerza bruta). Por IP +
+  // email: con datos móviles (CGNAT) muchos usuarios comparten la misma IP y,
+  // contando solo la IP, se bloqueaban entre ellos.
   authLimiter: createRateLimiter({
     windowMs: 15 * 60 * 1000, // 15 minutos
     max: 10,
+    message: 'Demasiados intentos de autenticación. Esperá 15 minutos.',
+    keyGenerator: (req) => `${req.ip}|${String(req.body?.email || '').trim().toLowerCase()}`,
+  }),
+
+  // Tope por IP de todos los intentos de auth juntos (probar muchas cuentas).
+  authIpLimiter: createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
     message: 'Demasiados intentos de autenticación. Esperá 15 minutos.'
   }),
 
-  // General para la API
+  // General para la API. Cada página hace ~8 requests y detrás de un CGNAT
+  // varios usuarios comparten IP: con 200 se cortaba navegando normal.
   apiLimiter: createRateLimiter({
     windowMs: 15 * 60 * 1000,
-    max: 200
+    max: 1000
   }),
 
   // Para endpoints de creación (POST)
