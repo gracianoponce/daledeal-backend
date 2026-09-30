@@ -6,6 +6,10 @@ const { validateSafeUrl, PHONE_REGEX } = require('../middleware/validate');
 // ============================================================
 const getUserById = async (req, res) => {
   const { id } = req.params;
+  // Un id no numérico hacía fallar la query (22P02) y respondía 500.
+  if (!/^\d{1,10}$/.test(String(id))) {
+    return res.status(400).json({ error: 'id inválido' });
+  }
 
   try {
     const userResult = await db.query(
