@@ -217,6 +217,8 @@ if (require.main === module) {
     console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔒 Rate limiting, security headers y logging activos`);
   });
+  // Órdenes sin pagar que reservan stock: se cancelan solas (ver orderExpiry).
+  require('./services/orderExpiry').startOrderExpiry();
 }
 
 module.exports = app;

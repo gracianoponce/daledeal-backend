@@ -414,3 +414,37 @@ describe('POST /admin/orders/:id/refund', () => {
     fetchSpy.mockRestore();
   });
 });
+
+// ------------------------------------------------------------
+describe('vencimiento de órdenes sin pagar', () => {
+  const { expireStalePendingOrders, EXPIRE_HOURS } = require('../src/services/orderExpiry');
+
+  test('cancela las vencidas y devuelve el stock de cada una', async () => {
+    const client = fakeClient(async (sql) => {
+      if (/UPDATE orders/i.test(sql)) return { rowCount: 2, rows: [{ id: 1, product_id: 5, quantity: 2 }, { id: 2, product_id: 8, quantity: 1 }] };
+    });
+    const spy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const n = await expireStalePendingOrders();
+    spy.mockRestore();
+    expect(n).toBe(2);
+    const upd = client.sqls.find(q => /UPDATE orders/i.test(q.sql));
+    expect(upd.sql).toMatch(/status = 'pending'/);
+    expect(upd.params).toEqual([['pending', 'rejected', 'cancelled'], EXPIRE_HOURS]);
+    const stock = client.sqls.filter(q => /UPDATE products/i.test(q.sql)).map(q => q.params);
+    expect(stock).toEqual([[2, 5], [1, 8]]);
+    expect(client.sqls.map(q => q.sql)).toContain('COMMIT');
+    expect(client.release).toHaveBeenCalled();
+  });
+
+  test('por default vencen a las 72 h (el plazo de un ticket de MP)', () => {
+    expect(EXPIRE_HOURS).toBe(72);
+  });
+
+  test('si la base falla, hace ROLLBACK y no rompe el proceso', async () => {
+    const client = fakeClient(async (sql) => { if (/UPDATE orders/i.test(sql)) throw new Error('db caída'); });
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(expireStalePendingOrders()).resolves.toBe(0);
+    spy.mockRestore();
+    expect(client.sqls.map(q => q.sql)).toContain('ROLLBACK');
+  });
+});
