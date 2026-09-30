@@ -260,6 +260,7 @@ const createOrder = async (req, res) => {
       // Crear o recuperar la conversación buyer ↔ seller
       // (dentro de la misma transacción para que no queden órdenes huérfanas)
       let conversation = null;
+      await client.query('SAVEPOINT order_conversation');
       try {
         const result = await findOrCreateConversation({
           buyer_id:   req.user.id,
@@ -271,7 +272,11 @@ const createOrder = async (req, res) => {
         });
         conversation = result.conversation;
       } catch (convErr) {
-        // No romper la compra si la conversación falla; solo log.
+        // No romper la compra si la conversación falla; solo log. Hay que volver
+        // al savepoint: en Postgres un error aborta toda la transacción y el
+        // COMMIT terminaba en un ROLLBACK silencioso (respondíamos 201 con una
+        // orden que no existía, p. ej. con dos clicks simultáneos).
+        await client.query('ROLLBACK TO SAVEPOINT order_conversation');
         console.warn('No se pudo crear la conversación para la orden:', convErr.message);
       }
 
@@ -424,6 +429,22 @@ const getOrderById = async (req, res) => {
   }
 };
 
+// Orden de los estados "hacia adelante": una orden no vuelve atrás.
+const STATUS_RANK = { pending: 0, confirmed: 1, shipped: 2, delivered: 3 };
+// Pagos con los que la orden ya no se cancela desde acá: la plata está (o
+// puede quedar) cobrada y cancelar no la devuelve. Va por el reembolso.
+const PAID_LIKE = ['paid', 'in_process', 'authorized'];
+
+function cancelBlockReason(order) {
+  if (order.status === 'shipped' || order.status === 'delivered') {
+    return 'La orden ya fue despachada: para cancelarla hay que hacer un reclamo desde Ayuda.';
+  }
+  if (PAID_LIKE.includes(order.payment_status)) {
+    return 'La orden ya está paga (o el pago se está procesando): para cancelarla hay que pedir la devolución desde Ayuda o con el botón de arrepentimiento.';
+  }
+  return null;
+}
+
 // ============================================================
 // PATCH /orders/:id/status
 // El vendedor actualiza el estado de la orden.
@@ -443,7 +464,7 @@ const updateOrderStatus = async (req, res) => {
 
   try {
     const check = await db.query(
-      'SELECT seller_id, buyer_id, status, product_id, quantity FROM orders WHERE id = $1',
+      'SELECT seller_id, buyer_id, status, payment_status, product_id, quantity FROM orders WHERE id = $1',
       [id]
     );
     if (check.rows.length === 0) {
@@ -460,6 +481,19 @@ const updateOrderStatus = async (req, res) => {
       return res.status(403).json({ error: 'No tenés permiso para cambiar el estado' });
     }
 
+    if (status !== 'cancelled') {
+      if (order.status === 'cancelled') {
+        return res.status(409).json({ error: 'La orden está cancelada' });
+      }
+      // Confirmar, despachar o entregar solo tiene sentido con la orden paga.
+      if (order.payment_status !== 'paid') {
+        return res.status(409).json({ error: 'La orden todavía no está paga' });
+      }
+      if (STATUS_RANK[status] < STATUS_RANK[order.status]) {
+        return res.status(409).json({ error: 'La orden no puede volver a un estado anterior' });
+      }
+    }
+
     // Cancelación: hacemos el cambio de estado y la devolución de stock
     // dentro de una transacción atómica. El UPDATE … WHERE status<>'cancelled'
     // RETURNING garantiza que el stock se devuelve EXACTAMENTE una vez,
@@ -469,22 +503,32 @@ const updateOrderStatus = async (req, res) => {
       try {
         await txClient.query('BEGIN');
 
-        const cancelRes = await txClient.query(
-          `UPDATE orders
-              SET status = 'cancelled', updated_at = NOW()
-            WHERE id = $1 AND status <> 'cancelled'
-            RETURNING quantity, product_id`,
+        // Con la fila bloqueada: si justo entra el pago (webhook), o espera a
+        // que terminemos o lo vemos pago y no cancelamos.
+        const lock = await txClient.query(
+          'SELECT status, payment_status, quantity, product_id FROM orders WHERE id = $1 FOR UPDATE',
           [id]
         );
+        const current = lock.rows[0];
 
-        if (cancelRes.rowCount === 0) {
+        if (current.status === 'cancelled') {
           await txClient.query('ROLLBACK');
           // ya estaba cancelada — devolvemos la orden tal cual está
           const cur = await db.query('SELECT * FROM orders WHERE id = $1', [id]);
           return res.json({ message: 'La orden ya estaba cancelada', order: cur.rows[0] });
         }
 
-        const cancelled = cancelRes.rows[0];
+        const blocked = cancelBlockReason(current);
+        if (blocked) {
+          await txClient.query('ROLLBACK');
+          return res.status(409).json({ error: blocked });
+        }
+
+        await txClient.query(
+          "UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+          [id]
+        );
+        const cancelled = current;
         await txClient.query(
           `UPDATE products
               SET stock  = stock + $1,
@@ -728,7 +772,7 @@ const confirmDelivery = async (req, res) => {
 
   try {
     const check = await db.query(
-      'SELECT buyer_id, status, buyer_confirmed_at FROM orders WHERE id = $1',
+      'SELECT buyer_id, status, payment_status, shipping_method, buyer_confirmed_at FROM orders WHERE id = $1',
       [id]
     );
     if (check.rows.length === 0) return res.status(404).json({ error: 'Orden no encontrada' });
@@ -736,7 +780,12 @@ const confirmDelivery = async (req, res) => {
     if (order.buyer_id !== req.user.id) {
       return res.status(403).json({ error: 'Solo el comprador puede confirmar la recepción' });
     }
-    if (!['shipped', 'delivered'].includes(order.status)) {
+    // Retiro en persona o sin envío: no hay paso "despachado", así que se puede
+    // confirmar desde que está paga (si no, la venta no se cerraba nunca).
+    const noShipping = order.shipping_method !== 'delivery';
+    const readyToConfirm = ['shipped', 'delivered'].includes(order.status)
+      || (noShipping && order.status === 'confirmed' && order.payment_status === 'paid');
+    if (!readyToConfirm) {
       return res.status(409).json({ error: 'La orden todavía no fue despachada' });
     }
     if (order.buyer_confirmed_at) {

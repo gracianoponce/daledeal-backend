@@ -16,6 +16,7 @@
 const crypto = require('crypto');
 const db = require('../config/database');
 const mp = require('../config/mercadopago');
+const { decodeHtmlEntities } = require('../middleware/validate');
 const {
   sendEmail,
   orderPaidBuyerTemplate,
@@ -186,8 +187,8 @@ const createPreference = async (req, res) => {
     // un ítem adicional por el costo del envío.
     const items = [{
       id:          String(order.product_id || order.id),
-      title:       order.product_title || `Compra Dale Deal #${order.id}`,
-      description: order.notes || '',
+      title:       decodeHtmlEntities(order.product_title) || `Compra Dale Deal #${order.id}`,
+      description: decodeHtmlEntities(order.notes),
       picture_url: order.product_image || undefined,
       category_id: 'marketplace',
       quantity:    order.quantity,
@@ -283,200 +284,336 @@ const createPreference = async (req, res) => {
 };
 
 // ============================================================
-// POST /payments/webhook  (sin auth — viene de MP)
+// Aplicar un pago de MP a su orden. Lo usan el webhook y la
+// reconciliación de GET /payments/:orderId/status (al volver del
+// checkout), así las dos vías siguen exactamente las mismas reglas.
 // ============================================================
-const handleWebhook = async (req, res) => {
-  // Respondemos rápido siempre 200 para que MP no reintente sin parar.
-  // El procesamiento real se hace de forma asíncrona.
-  res.status(200).send('ok');
 
+/**
+ * Trae un pago de la API de MP. Devuelve null si MP dice que no existe (404:
+ * p. ej. la notificación de prueba del panel de MP, que usa un id inventado).
+ * Cualquier otro error se propaga: el webhook responde 500 y MP reintenta.
+ */
+async function fetchPayment(paymentId) {
+  const payment = new mp.Payment(mp.requireClient());
   try {
-    const signatureValid = verifyWebhookSignature(req);
-    const requestId      = req.headers['x-request-id'] || null;
-    const topic          = req.query.topic || req.query.type || req.body?.type;
-    const dataId         = req.query['data.id'] || req.body?.data?.id;
+    return await payment.get({ id: paymentId });
+  } catch (err) {
+    if (err?.status === 404) return null;
+    throw err;
+  }
+}
 
-    // Si la firma es inválida — registramos para auditoría y abortamos.
-    // Sin esto, un atacante con la URL del webhook podría marcar
-    // órdenes como pagas mandando JSON falso.
-    if (signatureValid === false) {
-      console.error('[mp-webhook] Firma inválida — RECHAZANDO', { requestId, dataId });
-      try {
-        await db.query(
-          `INSERT INTO payment_events
-             (mp_payment_id, mp_topic, mp_action, status, status_detail,
-              raw_payload, signature_valid, request_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-           ON CONFLICT (request_id) DO NOTHING`,
-          [
-            dataId ? String(dataId) : null,
-            topic || 'unknown',
-            'rejected:invalid_signature',
-            'rejected', 'invalid_signature',
-            JSON.stringify({ headers: req.headers, query: req.query, body: req.body }),
-            false,
-            requestId,
-          ]
-        );
-      } catch (e) {
-        // si la tabla todavía no existe (eg. en dev) no bloqueamos
+const PAYMENT_ALERTS = {
+  double_payment:       'llegó un segundo pago APROBADO para una orden ya paga: devolver el duplicado desde el panel de MP',
+  paid_after_cancel:    'se aprobó el pago de una orden cancelada (el stock ya se había devuelto): reembolsar desde el admin',
+  refund_after_release: 'reembolso/contracargo de una orden cuya plata ya se le liberó al vendedor: revisar a mano',
+};
+
+/**
+ * Decide qué hacer con un pago según cómo está la orden. Pura (sin base).
+ *  - Una orden paga no vuelve atrás por notificaciones de OTRO pago (p. ej. el
+ *    rechazo de la primera tarjeta que llega después del pago bueno).
+ *  - Un pago aprobado confirma la orden solo si estaba 'pending': una
+ *    notificación repetida no devuelve a 'confirmed' una orden ya despachada o
+ *    entregada (eso bloqueaba "Recibí el producto" y reenviaba los mails).
+ *  - Un rechazo NO cancela la orden: en el checkout de MP el comprador puede
+ *    reintentar con otro medio. Antes se cancelaba sin devolver el stock y el
+ *    reintento fallaba con "Esta orden está cancelada".
+ *  - Un reembolso o contracargo cancela la orden y marca release_status
+ *    'refunded', salvo que la plata ya se haya liberado al vendedor (alerta).
+ * Devuelve { apply, payment_status, status, release_status, becamePaid,
+ * becameFailed, alert }.
+ */
+function decidePaymentTransition(order, paymentId, newStatus) {
+  const samePayment = !order.mp_payment_id || String(order.mp_payment_id) === String(paymentId);
+  const wasPaid     = order.payment_status === 'paid';
+  const isTerminal  = ['refunded', 'charged_back'].includes(order.payment_status);
+  const noop        = { apply: false };
+
+  if ((wasPaid || isTerminal) && !samePayment) {
+    return newStatus === 'paid' ? { apply: false, alert: 'double_payment' } : noop;
+  }
+  if (isTerminal) {
+    // Después de un reembolso solo puede cambiar entre refunded y charged_back.
+    return ['refunded', 'charged_back'].includes(newStatus) && newStatus !== order.payment_status
+      ? { apply: true, payment_status: newStatus, status: 'cancelled' }
+      : noop;
+  }
+
+  switch (newStatus) {
+    case 'paid':
+      if (wasPaid) return noop;
+      if (order.status === 'cancelled') {
+        // Canceló y después pagó en la pestaña de MP que tenía abierta: el stock
+        // ya se devolvió, así que no la revivimos. Queda paga para reembolsarla.
+        return { apply: true, payment_status: 'paid', status: 'cancelled', alert: 'paid_after_cancel' };
       }
-      return;
+      return {
+        apply: true, payment_status: 'paid', becamePaid: true,
+        status: order.status === 'pending' ? 'confirmed' : order.status,
+      };
+
+    case 'refunded':
+    case 'charged_back': {
+      const released = order.release_status === 'released';
+      return {
+        apply: true, payment_status: newStatus, status: 'cancelled',
+        release_status: released ? undefined : 'refunded',
+        alert: released ? 'refund_after_release' : undefined,
+      };
     }
 
-    // Idempotencia: si ya procesamos este request_id, salir
-    if (requestId) {
-      const dupe = await db.query(
-        'SELECT id FROM payment_events WHERE request_id = $1 LIMIT 1',
-        [requestId]
-      );
-      if (dupe.rows.length > 0) return;
-    }
+    case 'rejected':
+    case 'cancelled':
+      if (wasPaid || (samePayment && order.payment_status === newStatus)) return noop;
+      return {
+        apply: true, payment_status: newStatus, status: order.status,
+        // Un mail por tanda de rechazos (no uno por reintento) y nunca si la
+        // orden ya la canceló el comprador.
+        becameFailed: order.status !== 'cancelled' && !['rejected', 'cancelled'].includes(order.payment_status),
+      };
 
-    if (!dataId) {
-      console.warn('[mp-webhook] Notificación sin data.id, ignorando');
-      return;
-    }
+    default: // pending | in_process | authorized
+      if (wasPaid || (samePayment && order.payment_status === newStatus)) return noop;
+      return { apply: true, payment_status: newStatus, status: order.status };
+  }
+}
 
-    // Solo nos importan los eventos de payment por ahora
-    if (topic !== 'payment' && topic !== 'payment.created' && topic !== 'payment.updated') {
-      console.log('[mp-webhook] Topic ignorado:', topic);
-      return;
-    }
+/**
+ * Aplica un pago de MP (traído de la API de MP: es la fuente de verdad) a su
+ * orden, con la fila bloqueada, y registra el evento en payment_events. Los
+ * mails salen después del COMMIT y sin await. Devuelve la decisión (con
+ * orderId) o null si el pago no corresponde a ninguna orden nuestra.
+ */
+async function applyPaymentUpdate(mpPayment, { topic, action, requestId = null, signatureValid = null, rawPayload } = {}) {
+  const paymentId   = String(mpPayment.id);
+  const externalRef = mpPayment.external_reference;
+  const newStatus   = mpStatusToLocal(mpPayment.status);
 
-    // Consultamos el pago en MP
-    const client  = mp.requireClient();
-    const payment = new mp.Payment(client);
-    const mpPayment = await payment.get({ id: dataId });
+  const found = await db.query(
+    `SELECT id, buyer_id
+       FROM orders
+      WHERE mp_external_reference = $1 OR mp_payment_id = $2
+      LIMIT 1`,
+    [externalRef, paymentId]
+  );
+  if (found.rows.length === 0) {
+    console.warn('[mp] Orden no encontrada para external_ref', externalRef);
+    return null;
+  }
+  const orderId = found.rows[0].id;
 
-    if (!mpPayment) {
-      console.warn('[mp-webhook] No se pudo obtener el pago', dataId);
-      return;
-    }
+  // Defensa contra suplantación: si el payment trae metadata, debe coincidir
+  // con la orden que encontramos. Sin esto, un atacante podría crear
+  // su propia preferencia con un external_reference que matchee otra orden.
+  const meta = mpPayment.metadata || {};
+  if (meta.order_id != null && Number(meta.order_id) !== Number(orderId)) {
+    console.error('[mp] metadata.order_id no matchea', {
+      meta_order_id: meta.order_id, order_id: orderId, externalRef,
+    });
+    return null;
+  }
+  if (meta.buyer_id != null && Number(meta.buyer_id) !== Number(found.rows[0].buyer_id)) {
+    console.error('[mp] metadata.buyer_id no matchea', {
+      meta_buyer_id: meta.buyer_id, order_buyer_id: found.rows[0].buyer_id, externalRef,
+    });
+    return null;
+  }
 
-    const externalRef = mpPayment.external_reference;
-    const newStatus   = mpStatusToLocal(mpPayment.status);
+  let decision;
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
 
-    // Buscamos la orden
-    const orderRes = await db.query(
-      `SELECT id, payment_status, status, seller_id, buyer_id,
-              total_price, commission_amount
+    const cur = await client.query(
+      `SELECT id, status, payment_status, mp_payment_id, release_status,
+              seller_id, total_price, commission_amount
          FROM orders
-        WHERE mp_external_reference = $1 OR mp_payment_id = $2
-        LIMIT 1`,
-      [externalRef, String(dataId)]
+        WHERE id = $1
+          FOR UPDATE`,
+      [orderId]
     );
+    const order = cur.rows[0];
+    decision = decidePaymentTransition(order, paymentId, newStatus);
 
-    if (orderRes.rows.length === 0) {
-      console.warn('[mp-webhook] Orden no encontrada para external_ref', externalRef);
-      return;
-    }
-
-    const order = orderRes.rows[0];
-
-    // Defensa contra suplantación: si el payment trae metadata, debe coincidir
-    // con la orden que encontramos. Sin esto, un atacante podría crear
-    // su propia preferencia con un external_reference que matchee otra orden.
-    const meta = mpPayment.metadata || {};
-    if (meta.order_id != null && Number(meta.order_id) !== Number(order.id)) {
-      console.error('[mp-webhook] metadata.order_id no matchea', {
-        meta_order_id: meta.order_id, order_id: order.id, externalRef,
-      });
-      return;
-    }
-    if (meta.buyer_id != null && Number(meta.buyer_id) !== Number(order.buyer_id)) {
-      console.error('[mp-webhook] metadata.buyer_id no matchea', {
-        meta_buyer_id: meta.buyer_id, order_buyer_id: order.buyer_id, externalRef,
-      });
-      return;
-    }
-
-    // Actualizamos orden (transaccional con el log)
-    const client2 = await db.pool.connect();
-    try {
-      await client2.query('BEGIN');
-
-      await client2.query(
+    if (decision.apply) {
+      await client.query(
         `UPDATE orders
-            SET mp_payment_id = $1,
+            SET mp_payment_id  = $1,
                 payment_status = $2,
-                status = $3,
+                status         = $3,
+                release_status = COALESCE($4, release_status),
                 paid_at = CASE WHEN $2 = 'paid' AND paid_at IS NULL THEN NOW() ELSE paid_at END,
                 updated_at = NOW()
-          WHERE id = $4`,
-        [
-          String(dataId),
-          newStatus,
-          paymentToOrderStatus(newStatus, order.status),
-          order.id,
-        ]
+          WHERE id = $5`,
+        [paymentId, decision.payment_status, decision.status, decision.release_status || null, orderId]
       );
 
       // Si pasó a paid, creamos el payout para el vendedor
-      if (newStatus === 'paid') {
+      if (decision.becamePaid) {
         const gross      = parseFloat(order.total_price);
         const commission = parseFloat(order.commission_amount) || calculateCommission(gross);
         const net        = Math.round((gross - commission) * 100) / 100;
 
-        await client2.query(
+        await client.query(
           `INSERT INTO seller_payouts
              (seller_id, order_id, gross_amount, commission_amount, net_amount, currency, status)
            VALUES ($1, $2, $3, $4, $5, 'ARS', 'pending')
            ON CONFLICT (order_id) DO NOTHING`,
-          [order.seller_id, order.id, gross, commission, net]
+          [order.seller_id, orderId, gross, commission, net]
         );
       }
-
-      await client2.query(
-        `INSERT INTO payment_events
-           (order_id, mp_payment_id, mp_topic, mp_action, status, status_detail,
-            raw_payload, signature_valid, request_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (request_id) DO NOTHING`,
-        [
-          order.id,
-          String(dataId),
-          topic,
-          req.body?.action || topic,
-          mpPayment.status,
-          mpPayment.status_detail,
-          JSON.stringify({ headers: {
-            'x-signature':  req.headers['x-signature'],
-            'x-request-id': req.headers['x-request-id'],
-          }, query: req.query, body: req.body, mpPayment }),
-          signatureValid,
-          requestId,
-        ]
-      );
-
-      await client2.query('COMMIT');
-      console.log(`[mp-webhook] Orden ${order.id} → ${newStatus}`);
-
-      // Mandar emails de notificación cuando la orden pasa a "paid".
-      // Lo hacemos FUERA de la transacción y sin await — si falla un email
-      // no afecta a la orden. Si falla el envío, queda registrado en logs.
-      if (newStatus === 'paid') {
-        sendOrderPaidEmails(order.id).catch(err =>
-          console.error('[mp-webhook] sendOrderPaidEmails error:', err.message)
-        );
-      }
-      // Si el pago fue rechazado o cancelado por MP, avisamos al comprador
-      // (rapipago vencido, fondos insuficientes, 3DS rechazado, etc.).
-      if (newStatus === 'rejected' || newStatus === 'cancelled') {
-        sendPaymentFailedEmail(order.id, mpPayment.status_detail).catch(err =>
-          console.error('[mp-webhook] sendPaymentFailedEmail error:', err.message)
-        );
-      }
-    } catch (txErr) {
-      await client2.query('ROLLBACK');
-      throw txErr;
-    } finally {
-      client2.release();
     }
+
+    await client.query(
+      `INSERT INTO payment_events
+         (order_id, mp_payment_id, mp_topic, mp_action, status, status_detail,
+          raw_payload, signature_valid, request_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (request_id) DO NOTHING`,
+      [
+        orderId,
+        paymentId,
+        String(topic || 'unknown').slice(0, 40),
+        String(decision.apply ? action : `${action}:ignored`).slice(0, 40),
+        mpPayment.status,
+        mpPayment.status_detail,
+        JSON.stringify(rawPayload || { mpPayment }),
+        signatureValid,
+        requestId,
+      ]
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  if (decision.apply) console.log(`[mp] Orden ${orderId} → ${decision.payment_status} (${topic})`);
+  if (decision.alert) {
+    console.error(`[mp] ALERTA orden ${orderId} (pago ${paymentId}): ${PAYMENT_ALERTS[decision.alert]}`);
+  }
+
+  // Mails FUERA de la transacción y sin await: si falla un mail no afecta a la
+  // orden. Si falla el envío, queda registrado en logs.
+  if (decision.becamePaid) {
+    sendOrderPaidEmails(orderId).catch(err =>
+      console.error('[mp] sendOrderPaidEmails error:', err.message)
+    );
+  }
+  // Pago rechazado o cancelado por MP (rapipago vencido, fondos insuficientes,
+  // 3DS rechazado, etc.): avisamos al comprador que puede reintentar.
+  if (decision.becameFailed) {
+    sendPaymentFailedEmail(orderId, mpPayment.status_detail).catch(err =>
+      console.error('[mp] sendPaymentFailedEmail error:', err.message)
+    );
+  }
+
+  return { orderId, ...decision };
+}
+
+// ============================================================
+// POST /payments/webhook  (sin auth — viene de MP)
+// ============================================================
+// Procesamos ANTES de responder: si algo falla (MP o la base caídos)
+// respondemos 500 y MP reintenta. Antes respondíamos 200 de entrada y un
+// error dejaba la orden paga como 'pending' sin que nadie se enterara.
+// MP espera la respuesta hasta 22 s y el SDK corta a los 8 s.
+const handleWebhook = async (req, res) => {
+  try {
+    const outcome = await processWebhook(req);
+    if (outcome === 'invalid_signature') return res.status(401).send('invalid signature');
+    return res.status(200).send('ok');
   } catch (err) {
     console.error('[mp-webhook] Error procesando:', err);
+    return res.status(500).send('error');
   }
 };
+
+async function processWebhook(req) {
+  const signatureValid = verifyWebhookSignature(req);
+  const requestId      = req.headers['x-request-id'] || null;
+  const topic          = req.query.topic || req.query.type || req.body?.type;
+  const dataId         = req.query['data.id'] || req.body?.data?.id;
+
+  // Si la firma es inválida — registramos para auditoría y abortamos.
+  // Sin esto, un atacante con la URL del webhook podría marcar
+  // órdenes como pagas mandando JSON falso.
+  // Si vino CON firma (mal), respondemos 401 para que MP reintente: si el
+  // secreto estaba mal cargado, al corregirlo los reintentos entran solos.
+  // El request_id no va a su columna: si no, el reintento válido quedaba
+  // descartado como "ya procesado".
+  if (signatureValid === false) {
+    console.error('[mp-webhook] Firma inválida — RECHAZANDO', { requestId, dataId });
+    try {
+      await db.query(
+        `INSERT INTO payment_events
+           (mp_payment_id, mp_topic, mp_action, status, status_detail,
+            raw_payload, signature_valid, request_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)`,
+        [
+          dataId ? String(dataId) : null,
+          String(topic || 'unknown').slice(0, 40),
+          'rejected:invalid_signature',
+          'rejected', 'invalid_signature',
+          JSON.stringify({ headers: req.headers, query: req.query, body: req.body }),
+          false,
+        ]
+      );
+    } catch (e) {
+      // si la tabla todavía no existe (eg. en dev) no bloqueamos
+    }
+    return req.headers['x-signature'] ? 'invalid_signature' : 'ignored';
+  }
+
+  // Idempotencia: si ya procesamos este request_id, salir
+  if (requestId) {
+    const dupe = await db.query(
+      'SELECT id FROM payment_events WHERE request_id = $1 LIMIT 1',
+      [requestId]
+    );
+    if (dupe.rows.length > 0) return 'duplicate';
+  }
+
+  if (!dataId) {
+    console.warn('[mp-webhook] Notificación sin data.id, ignorando');
+    return 'ignored';
+  }
+
+  // Solo nos importan los eventos de payment por ahora
+  if (topic !== 'payment' && topic !== 'payment.created' && topic !== 'payment.updated') {
+    console.log('[mp-webhook] Topic ignorado:', topic);
+    return 'ignored';
+  }
+
+  // Consultamos el pago en MP
+  const mpPayment = await fetchPayment(dataId);
+  if (!mpPayment) {
+    console.warn('[mp-webhook] MP no encontró el pago', dataId);
+    return 'ignored';
+  }
+
+  await applyPaymentUpdate(mpPayment, {
+    topic,
+    action: req.body?.action || topic,
+    requestId,
+    signatureValid,
+    rawPayload: {
+      headers: {
+        'x-signature':  req.headers['x-signature'],
+        'x-request-id': req.headers['x-request-id'],
+      },
+      query: req.query,
+      body: req.body,
+      mpPayment,
+    },
+  });
+  return 'ok';
+}
 
 // ============================================================
 // Helper: trae los datos completos de la orden + ambos usuarios
@@ -565,11 +702,8 @@ async function sendPaymentFailedEmail(orderId, statusDetail) {
 // ============================================================
 // GET /payments/:orderId/status
 // ============================================================
-const getStatus = async (req, res) => {
-  const orderId = parseInt(req.params.orderId, 10);
-  if (Number.isNaN(orderId)) return res.status(400).json({ error: 'orderId inválido' });
-
-  try {
+// Lo que devuelve GET /payments/:orderId/status (null si no existe).
+async function loadOrderStatus(orderId) {
     const result = await db.query(
       `SELECT o.id, o.buyer_id, o.seller_id, o.product_id, o.quantity,
               o.total_price, o.currency, o.status, o.payment_status,
@@ -577,6 +711,7 @@ const getStatus = async (req, res) => {
               o.commission_amount,
               o.shipping_method, o.shipping_cost,
               o.tracking_number, o.dispatched_at, o.delivered_at,
+              o.mp_external_reference,
               p.title  AS product_title,
               (SELECT id FROM conversations c
                  WHERE c.item_type  = 'product'
@@ -591,16 +726,42 @@ const getStatus = async (req, res) => {
         WHERE o.id = $1`,
       [orderId]
     );
+    return result.rows[0] || null;
+}
 
-    if (result.rows.length === 0) {
+const getStatus = async (req, res) => {
+  const orderId = parseInt(req.params.orderId, 10);
+  if (Number.isNaN(orderId)) return res.status(400).json({ error: 'orderId inválido' });
+  const paymentId = String(req.query.payment_id || '');
+
+  try {
+    let order = await loadOrderStatus(orderId);
+    if (!order) {
       return res.status(404).json({ error: 'Orden no encontrada' });
     }
-
-    const order = result.rows[0];
     if (order.buyer_id !== req.user.id && order.seller_id !== req.user.id) {
       return res.status(403).json({ error: 'No tenés permiso para ver esta orden' });
     }
 
+    // Reconciliación al volver de MP: las back_urls traen ?payment_id=…. Si la
+    // orden todavía no figura paga, le preguntamos el pago a MP (fuente de
+    // verdad) y aplicamos lo mismo que haría el webhook. Cubre un webhook que
+    // no llegó (firma mal cargada, MP o la base caídos). Si falla, la página
+    // muestra lo que haya: nunca la rompe.
+    if (/^\d{1,20}$/.test(paymentId) && order.buyer_id === req.user.id
+        && order.payment_status !== 'paid' && mp.isConfigured) {
+      try {
+        const mpPayment = await fetchPayment(paymentId);
+        if (mpPayment?.external_reference && mpPayment.external_reference === order.mp_external_reference) {
+          const applied = await applyPaymentUpdate(mpPayment, { topic: 'back_url', action: 'back_url' });
+          if (applied?.apply) order = await loadOrderStatus(orderId);
+        }
+      } catch (err) {
+        console.warn('[mp] getStatus: no se pudo reconciliar con MP:', err?.message || err);
+      }
+    }
+
+    delete order.mp_external_reference;
     return res.json({ order });
   } catch (err) {
     console.error('[mp] getStatus error:', err);
@@ -666,7 +827,7 @@ const refundOrder = async (req, res) => {
     // ── 1. Buscar la orden con LOCK ─────────────────────
     const orderRes = await client.query(
       `SELECT o.id, o.payment_status, o.status, o.mp_payment_id,
-              o.total_price, o.buyer_id, o.seller_id,
+              o.total_price, o.buyer_id, o.seller_id, o.release_status,
               ub.email AS buyer_email, ub.name AS buyer_name,
               p.title  AS product_title
          FROM orders o
@@ -695,6 +856,15 @@ const refundOrder = async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({
         error: `No se puede reembolsar una orden con estado "${order.payment_status}". Solo se reembolsan órdenes pagadas.`,
+      });
+    }
+
+    // Si la plata ya se le liberó al vendedor, reembolsar sería pagar dos veces
+    // (al vendedor y al comprador): se resuelve a mano, no desde acá.
+    if (order.release_status === 'released') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: 'La plata de esta orden ya se le liberó al vendedor. El reembolso hay que resolverlo a mano (primero recuperar el pago del vendedor).',
       });
     }
 
@@ -739,6 +909,7 @@ const refundOrder = async (req, res) => {
       `UPDATE orders
           SET payment_status = $1,
               status         = $2,
+              release_status = CASE WHEN $1 = 'refunded' THEN 'refunded' ELSE release_status END,
               updated_at     = NOW()
         WHERE id = $3`,
       [newPaymentStatus, newOrderStatus, order.id]
@@ -800,4 +971,5 @@ module.exports = {
   handleWebhook,
   getStatus,
   refundOrder,
+  decidePaymentTransition,
 };

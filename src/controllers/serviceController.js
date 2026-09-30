@@ -198,7 +198,9 @@ const getServiceById = async (req, res) => {
           WHERE item_type = 'service'
           GROUP BY item_id
        ) rs ON rs.item_id = s.id
-       WHERE s.id = $1`,
+       WHERE s.id = $1
+         AND s.status <> 'deleted'  -- dado de baja: no se muestra ni por link directo
+      `,
       [id]
     );
 
@@ -260,9 +262,14 @@ const updateService = async (req, res) => {
   const { title, description, price_from, price_to, price_type, category_id, images, location, zones_covered, status } = req.body;
 
   try {
-    const check = await db.query('SELECT provider_id FROM services WHERE id = $1', [id]);
-    if (check.rows.length === 0) return res.status(404).json({ error: 'Servicio no encontrado' });
+    const check = await db.query('SELECT provider_id, status FROM services WHERE id = $1', [id]);
+    // Un servicio borrado (por el proveedor o dado de baja por el admin) no se
+    // edita ni se reactiva.
+    if (check.rows.length === 0 || check.rows[0].status === 'deleted') return res.status(404).json({ error: 'Servicio no encontrado' });
     if (check.rows[0].provider_id !== req.user.id) return res.status(403).json({ error: 'No tenés permiso para editar este servicio' });
+    if (status !== undefined && !['active', 'paused'].includes(status)) {
+      return res.status(400).json({ error: 'status debe ser uno de: active, paused' });
+    }
 
     const v = validateServiceFields(req.body, { mode: 'update' });
     if (!v.ok) return res.status(400).json({ error: v.error });
@@ -303,7 +310,9 @@ const deleteService = async (req, res) => {
     if (check.rows.length === 0) return res.status(404).json({ error: 'Servicio no encontrado' });
     if (check.rows[0].provider_id !== req.user.id) return res.status(403).json({ error: 'No tenés permiso' });
 
-    await db.query('DELETE FROM services WHERE id = $1', [id]);
+    // Borrado lógico: el DELETE real fallaba (500) si el servicio tenía
+    // conversaciones, y además borraba el historial.
+    await db.query("UPDATE services SET status = 'deleted', updated_at = NOW() WHERE id = $1", [id]);
     res.json({ message: 'Servicio eliminado' });
   } catch (err) {
     console.error('Error en deleteService:', err);

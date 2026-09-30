@@ -108,6 +108,12 @@ const login = async (req, res) => {
 
     const user = result.rows[0];
 
+    // Cuenta creada con Google: no tiene contraseña (password_hash NULL) y
+    // bcrypt.compare(x, null) tira excepción → respondíamos 500.
+    if (!user.password_hash) {
+      return res.status(401).json({ error: 'Esta cuenta se creó con Google: iniciá sesión con el botón de Google.' });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
@@ -145,6 +151,9 @@ const changePassword = async (req, res) => {
   try {
     const result = await db.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+    if (!result.rows[0].password_hash) {
+      return res.status(400).json({ error: 'Tu cuenta entra con Google y no tiene contraseña. Si querés crear una, usá "¿Olvidaste tu contraseña?".' });
+    }
 
     const isMatch = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
     if (!isMatch) return res.status(401).json({ error: 'Contraseña actual incorrecta' });
@@ -194,8 +203,13 @@ const deactivateAccount = async (req, res) => {
 
   try {
     const result = await db.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
-    const isMatch = await bcrypt.compare(password, result.rows[0].password_hash);
-    if (!isMatch) return res.status(401).json({ error: 'Contraseña incorrecta' });
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+    // Las cuentas de Google no tienen contraseña que confirmar: alcanza con la
+    // sesión válida (la desactivación se revierte desde soporte).
+    const hash = result.rows[0].password_hash;
+    if (hash && !(await bcrypt.compare(password, hash))) {
+      return res.status(401).json({ error: 'Contraseña incorrecta' });
+    }
 
     await db.query('UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1', [req.user.id]);
     res.json({ message: 'Cuenta desactivada. Podés volver a activarla contactando a soporte.' });

@@ -9,11 +9,13 @@ const {
 } = require('../controllers/reviewsController');
 const authMiddleware = require('../middleware/auth');
 
+// GET  /reviews/user/:userId      — Reseñas recibidas por un usuario (público)
+// Tiene que ir ANTES de /:type/:itemId: si no, "user" se tomaba como :type y
+// esta ruta nunca respondía.
+router.get('/user/:userId', getUserReviews);
+
 // GET  /reviews/:type/:itemId     — Reseñas de un producto o servicio (público)
 router.get('/:type/:itemId', getReviews);
-
-// GET  /reviews/user/:userId      — Reseñas recibidas por un usuario (público)
-router.get('/user/:userId', getUserReviews);
 
 // --- Rutas protegidas ---
 

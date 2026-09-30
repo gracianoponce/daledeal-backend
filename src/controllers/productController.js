@@ -300,7 +300,9 @@ const getProductById = async (req, res) => {
           WHERE item_type = 'product'
           GROUP BY item_id
        ) rs ON rs.item_id = p.id
-       WHERE p.id = $1`,
+       WHERE p.id = $1
+         AND p.status <> 'deleted'  -- dado de baja: no se muestra ni por link directo
+      `,
       [id]
     );
 
@@ -368,6 +370,9 @@ const createProduct = async (req, res) => {
   }
 };
 
+// Estados que el vendedor puede poner con PUT ("deleted" solo con DELETE o el admin).
+const SELLER_STATUSES = ['active', 'paused', 'sold'];
+
 // ============================================================
 // PUT /products/:id  (requiere token, solo el vendedor)
 // ============================================================
@@ -384,9 +389,14 @@ const updateProduct = async (req, res) => {
 
   try {
     // Verificar que el producto pertenezca al usuario
-    const check = await db.query('SELECT seller_id FROM products WHERE id = $1', [id]);
-    if (check.rows.length === 0) return res.status(404).json({ error: 'Producto no encontrado' });
+    const check = await db.query('SELECT seller_id, status FROM products WHERE id = $1', [id]);
+    // Un producto borrado (por el vendedor o dado de baja por el admin) no se edita
+    // ni se reactiva: antes el vendedor podía volverlo a "active" con un PUT.
+    if (check.rows.length === 0 || check.rows[0].status === 'deleted') return res.status(404).json({ error: 'Producto no encontrado' });
     if (check.rows[0].seller_id !== req.user.id) return res.status(403).json({ error: 'No tenés permiso para editar este producto' });
+    if (status !== undefined && !SELLER_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `status debe ser uno de: ${SELLER_STATUSES.join(', ')}` });
+    }
 
     // Validar tipos de los campos enviados (cualquier subset)
     const v = validateProductFields(req.body, { mode: 'update' });
@@ -451,7 +461,9 @@ const deleteProduct = async (req, res) => {
     if (check.rows.length === 0) return res.status(404).json({ error: 'Producto no encontrado' });
     if (check.rows[0].seller_id !== req.user.id) return res.status(403).json({ error: 'No tenés permiso' });
 
-    await db.query('DELETE FROM products WHERE id = $1', [id]);
+    // Borrado lógico: el DELETE real fallaba (500) si el producto tenía
+    // conversaciones u órdenes, y además borraba el historial de las ventas.
+    await db.query("UPDATE products SET status = 'deleted', updated_at = NOW() WHERE id = $1", [id]);
     res.json({ message: 'Producto eliminado' });
   } catch (err) {
     console.error('Error en deleteProduct:', err);

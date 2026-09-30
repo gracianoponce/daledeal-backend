@@ -28,6 +28,10 @@ const app     = require('../src/index');
 const svc     = require('../src/services/payoutAccount');
 const { _resetStoreForTests } = require('../src/middleware/rateLimiter');
 
+// El middleware de auth consulta si la cuenta sigue activa: no cuenta como
+// SQL del endpoint en los tests que miran qué consultas corrió.
+const AUTH_SQL = /SELECT is_active FROM users WHERE id/;
+
 const tokenFor = (id, role = 'user') =>
   jwt.sign({ id, email: `u${id}@test.com`, role }, process.env.JWT_SECRET, { expiresIn: '1h' });
 const flush = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
@@ -180,7 +184,7 @@ describe('admin: datos de cobro en retenciones', () => {
 
   test('la cola trae la cuenta y el titular del vendedor', async () => {
     const sqls = [];
-    asAdmin(async (sql) => { sqls.push(sql); return { rowCount: 1, rows: [{ id: 42, seller_payout_account: 'DALE.DEAL.MP', seller_payout_holder: 'Juan Pérez' }] }; });
+    asAdmin(async (sql) => { if (!AUTH_SQL.test(sql)) sqls.push(sql); return { rowCount: 1, rows: [{ id: 42, seller_payout_account: 'DALE.DEAL.MP', seller_payout_holder: 'Juan Pérez' }] }; });
     const res = await request(app).get('/admin/payouts/pending').set('Authorization', `Bearer ${tokenFor(1, 'admin')}`);
     expect(res.status).toBe(200);
     expect(res.body.orders[0]).toMatchObject({ seller_payout_account: 'DALE.DEAL.MP', seller_payout_holder: 'Juan Pérez' });
@@ -190,7 +194,7 @@ describe('admin: datos de cobro en retenciones', () => {
   test('sin la migration 017 la cola igual responde (sin datos de cobro)', async () => {
     const sqls = [];
     asAdmin(async (sql) => {
-      sqls.push(sql);
+      if (!AUTH_SQL.test(sql)) sqls.push(sql);
       if (/payout_account/.test(sql)) throw pgError('42703');
       return { rowCount: 1, rows: [{ id: 42 }] };
     });
@@ -203,7 +207,7 @@ describe('admin: datos de cobro en retenciones', () => {
 
   test('el historial trae a qué cuenta se liberó', async () => {
     const sqls = [];
-    asAdmin(async (sql) => { sqls.push(sql); return { rowCount: 1, rows: [{ payout_id: 7, destination: 'Alias DALE.DEAL.MP · Juan Pérez' }] }; });
+    asAdmin(async (sql) => { if (!AUTH_SQL.test(sql)) sqls.push(sql); return { rowCount: 1, rows: [{ payout_id: 7, destination: 'Alias DALE.DEAL.MP · Juan Pérez' }] }; });
     const res = await request(app).get('/admin/payouts/released').set('Authorization', `Bearer ${tokenFor(1, 'admin')}`);
     expect(res.status).toBe(200);
     expect(res.body.payouts[0].destination).toBe('Alias DALE.DEAL.MP · Juan Pérez');

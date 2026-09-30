@@ -6,20 +6,25 @@
  */
 
 /**
- * Almacén en memoria: { ip: { count, resetAt } }
+ * Cada limiter tiene SU PROPIO almacén en memoria: { ip: { count, resetAt } }.
+ * Antes había un único Map compartido por todos: el apiLimiter global sumaba
+ * cada request al mismo contador que miraba el authLimiter (máx. 10), así que
+ * después de navegar un poco el login respondía 429 "demasiados intentos".
  * En producción se reemplazaría por Redis.
  */
-const store = new Map();
+const stores = new Set();
 
 /**
  * Limpia entradas vencidas cada 5 minutos
  */
 setInterval(() => {
   const now = Date.now();
-  for (const [key, record] of store.entries()) {
-    if (now >= record.resetAt) store.delete(key);
+  for (const store of stores) {
+    for (const [key, record] of store.entries()) {
+      if (now >= record.resetAt) store.delete(key);
+    }
   }
-}, 5 * 60 * 1000);
+}, 5 * 60 * 1000).unref?.();
 
 /**
  * Crea un middleware de rate limiting.
@@ -31,6 +36,8 @@ setInterval(() => {
  */
 function createRateLimiter({ windowMs = 15 * 60 * 1000, max = 100, message } = {}) {
   const defaultMessage = `Demasiadas solicitudes. Intentá de nuevo en ${Math.round(windowMs / 60000)} minutos.`;
+  const store = new Map();
+  stores.add(store);
 
   return function rateLimiterMiddleware(req, res, next) {
     // Identificar por IP (y opcionalmente por usuario si está autenticado)
@@ -92,6 +99,6 @@ module.exports = {
   // los tests terminan probando "429" en lugar del controller real.
   // No exportar este método en código de producción que NO sea tests.
   _resetStoreForTests() {
-    store.clear();
+    for (const store of stores) store.clear();
   },
 };

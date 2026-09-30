@@ -32,6 +32,23 @@ function sanitize(str) {
 }
 
 /**
+ * Inversa exacta de sanitize() para los 5 caracteres que escapa: lo guardado
+ * vuelve a ser el texto que escribió el usuario. Para mostrar texto donde NO
+ * se interpreta HTML (el ítem del checkout de MP) o antes de volver a escapar
+ * (mails); si no, se ve "&amp;" literal. &amp; va último para no decodificar
+ * dos veces ("&amp;lt;" → "&lt;").
+ */
+function decodeHtmlEntities(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
  * Valida fuerza de contraseña.
  * Retorna { ok, message }
  */
@@ -114,6 +131,7 @@ function parseSortOrder(query, allowedFields = ['created_at', 'price', 'title', 
 module.exports = {
   sanitize,
   sanitizeBody,
+  decodeHtmlEntities,
   validatePassword,
   validateEmail,
   validateSafeUrl,

@@ -11,6 +11,8 @@
  * solo este archivo — la API pública sendEmail() se mantiene igual.
  */
 
+const { decodeHtmlEntities } = require('../middleware/validate');
+
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_API_URL = 'https://api.resend.com/emails';
 
@@ -136,8 +138,10 @@ function emailWrap(innerHtml, { title = 'Dale Deal' } = {}) {
 </html>`;
 }
 
+// Decodifica antes de escapar: el texto guardado ya viene escapado por
+// sanitizeBody y, escapado otra vez, el mail mostraba "&amp;" literal.
 function escapeHtml(s) {
-  return String(s == null ? '' : s)
+  return decodeHtmlEntities(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }

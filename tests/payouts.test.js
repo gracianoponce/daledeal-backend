@@ -22,6 +22,10 @@ const email   = require('../src/services/email');
 const app     = require('../src/index');
 const { _resetStoreForTests } = require('../src/middleware/rateLimiter');
 
+// El middleware de auth consulta si la cuenta sigue activa: no cuenta como
+// SQL del endpoint en los tests que miran qué consultas corrió.
+const AUTH_SQL = /SELECT is_active FROM users WHERE id/;
+
 const tokenFor = (id, role = 'user') =>
   jwt.sign({ id, email: `u${id}@test.com`, role }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
@@ -144,8 +148,8 @@ describe('POST /admin/orders/:id/release → aviso al vendedor', () => {
 describe('POST /orders/:id/confirm-delivery → aviso al vendedor', () => {
   const wire = ({ confirmed = null, payment = 'paid' } = {}) => {
     db.query.mockImplementation(async (sql) => {
-      if (/SELECT buyer_id, status, buyer_confirmed_at FROM orders/i.test(sql)) {
-        return { rowCount: 1, rows: [{ buyer_id: 7, status: 'shipped', buyer_confirmed_at: confirmed }] };
+      if (/SELECT buyer_id, status, .*buyer_confirmed_at FROM orders/i.test(sql)) {
+        return { rowCount: 1, rows: [{ buyer_id: 7, status: 'shipped', payment_status: payment, shipping_method: 'delivery', buyer_confirmed_at: confirmed }] };
       }
       if (/SET buyer_confirmed_at = NOW\(\)/i.test(sql)) return { rowCount: 1, rows: [{ id: 42, status: 'delivered', buyer_confirmed_at: new Date() }] };
       if (/seller_email/i.test(sql)) {
@@ -191,7 +195,7 @@ describe('GET /orders/sales → estado del cobro', () => {
   test('devuelve release_status, si es liberable y el payout registrado', async () => {
     const sqls = [];
     db.query.mockImplementation(async (sql) => {
-      sqls.push(sql);
+      if (!AUTH_SQL.test(sql)) sqls.push(sql);
       return { rowCount: 1, rows: [{
         id: 42, status: 'delivered', payment_status: 'paid', total_price: '10000.00', commission_amount: '500.00',
         release_status: 'released', released_at: new Date('2026-09-20T12:00:00Z'), releasable: true,
@@ -209,7 +213,7 @@ describe('GET /orders/sales → estado del cobro', () => {
   test('sin la tabla payouts (42P01) responde igual, sin datos de cobro', async () => {
     const sqls = [];
     db.query.mockImplementation(async (sql) => {
-      sqls.push(sql);
+      if (!AUTH_SQL.test(sql)) sqls.push(sql);
       if (/payouts/.test(sql)) { const e = new Error('relation "payouts" does not exist'); e.code = '42P01'; throw e; }
       return { rowCount: 1, rows: [{ id: 42, status: 'shipped', payment_status: 'paid' }] };
     });
@@ -226,7 +230,7 @@ describe('GET /orders/sales → estado del cobro', () => {
 describe("GET /orders/my → la compra sabe si el pago ya se liberó", () => {
   test("incluye release_status en el grupo con fallback", async () => {
     const sqls = [];
-    db.query.mockImplementation(async (sql) => { sqls.push(sql); return { rowCount: 1, rows: [{ id: 9, status: "delivered", release_status: "released" }] }; });
+    db.query.mockImplementation(async (sql) => { if (!AUTH_SQL.test(sql)) sqls.push(sql); return { rowCount: 1, rows: [{ id: 9, status: "delivered", release_status: "released" }] }; });
     const res = await request(app).get("/orders/my").set("Authorization", `Bearer ${tokenFor(1)}`);
     expect(res.status).toBe(200);
     expect(res.body.data[0].release_status).toBe("released");

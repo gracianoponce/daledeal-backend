@@ -73,7 +73,9 @@ app.use(cors({
       .split(',').map(normalizeOrigin).filter(Boolean);
     const o = normalizeOrigin(origin);
     if (allowed.includes('*') || allowed.includes(o)) return callback(null, true);
-    callback(new Error(`CORS: origen no permitido — ${origin}`));
+    // Sin error: con new Error() respondíamos 500 y ensuciaba los logs. Sin
+    // headers CORS el navegador bloquea la respuesta igual.
+    callback(null, false);
   },
   methods:        ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
