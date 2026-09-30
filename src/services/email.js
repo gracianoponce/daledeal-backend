@@ -222,7 +222,7 @@ function orderPaidBuyerTemplate({ buyerName, orderId, productTitle, total, selle
   return {
     subject: `Compra confirmada · Orden #${orderId}`,
     html:    emailWrap(inner, { title: 'Compra confirmada' }),
-    text:    `Compra confirmada en Dale Deal\nOrden #${orderId}\nProducto: ${productTitle}\nTotal: ${totalFmt}\n\nEntrá a Mis compras: https://daledeal.com.ar/HTML/notificaciones.html#mis-compras`,
+    text:    `Compra confirmada en Dale Deal\nOrden #${orderId}\nProducto: ${decodeHtmlEntities(productTitle)}\nTotal: ${totalFmt}\n\nEntrá a Mis compras: https://daledeal.com.ar/HTML/notificaciones.html#mis-compras`,
   };
 }
 
@@ -253,7 +253,7 @@ function newSaleSellerTemplate({ sellerName, orderId, productTitle, buyerName, t
   return {
     subject: `🎉 Vendiste "${productTitle || 'un producto'}" — Orden #${orderId}`,
     html:    emailWrap(inner, { title: 'Venta nueva' }),
-    text:    `Venta nueva en Dale Deal\nOrden #${orderId}\nProducto: ${productTitle}\nTotal: ${totalFmt}\nComprador: ${buyerName}\n\nGestionala en: https://daledeal.com.ar/HTML/mis-ventas.html${needsPayoutAccount ? '\nCargá tus datos de cobro: https://daledeal.com.ar/mi-cuenta#datos-cobro' : ''}`,
+    text:    `Venta nueva en Dale Deal\nOrden #${orderId}\nProducto: ${decodeHtmlEntities(productTitle)}\nTotal: ${totalFmt}\nComprador: ${decodeHtmlEntities(buyerName)}\n\nGestionala en: https://daledeal.com.ar/HTML/mis-ventas.html${needsPayoutAccount ? '\nCargá tus datos de cobro: https://daledeal.com.ar/mi-cuenta#datos-cobro' : ''}`,
   };
 }
 
