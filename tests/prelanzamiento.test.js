@@ -470,3 +470,25 @@ describe('cambio de contraseña', () => {
     expect(res.body.error).toMatch(/Google/);
   });
 });
+
+// ------------------------------------------------------------
+describe('POST /orders: método de envío', () => {
+  const product = { id: 5, title: 'Bici', price: '10000', currency: 'ARS', stock: 3, seller_id: 9, status: 'active',
+    shipping_required: true, offers_delivery: true, offers_pickup: false, shipping_cost: '2500', pickup_address: null };
+
+  test('un shipping_method inventado → 400 (antes: retiro gratis aunque no hubiera retiro)', async () => {
+    db.query.mockImplementation(async (sql) => (/FROM products WHERE id = \$1/i.test(sql) ? { rowCount: 1, rows: [product] } : { rowCount: 0, rows: [] }));
+    const res = await request(app).post('/orders').set('Authorization', `Bearer ${tokenFor(7)}`)
+      .send({ product_id: 5, quantity: 1, shipping_method: 'gratis' });
+    expect(res.status).toBe(400);
+    expect(db.pool.connect).not.toHaveBeenCalled();
+  });
+
+  test('retiro cuando el vendedor solo ofrece envío → 400', async () => {
+    db.query.mockImplementation(async (sql) => (/FROM products WHERE id = \$1/i.test(sql) ? { rowCount: 1, rows: [product] } : { rowCount: 0, rows: [] }));
+    const res = await request(app).post('/orders').set('Authorization', `Bearer ${tokenFor(7)}`)
+      .send({ product_id: 5, quantity: 1, shipping_method: 'pickup' });
+    expect(res.status).toBe(400);
+  });
+});
+

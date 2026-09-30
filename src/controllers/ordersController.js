@@ -85,7 +85,9 @@ function resolveShippingForOrder(product, body) {
     else if (offersPickup && !offersDelivery) method = 'pickup';
   }
 
-  if (!method) {
+  // Solo "delivery" o "pickup": cualquier otro valor caía al final como retiro
+  // con envío $0, aunque el vendedor no ofreciera retiro (se evitaba pagar el envío).
+  if (method !== 'delivery' && method !== 'pickup') {
     return {
       ok: false, status: 400,
       error: 'shipping_method es obligatorio: "delivery" o "pickup"',
