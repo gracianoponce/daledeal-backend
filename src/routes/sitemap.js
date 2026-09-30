@@ -3,6 +3,8 @@ const router  = express.Router();
 const db      = require('../config/database');
 
 const SITE_URL = process.env.PUBLIC_SITE_URL || 'https://daledeal.com.ar';
+// URLs limpias (/producto?id=): las /HTML/x.html redirigen con 301 y Google
+// prefiere la URL final en el sitemap.
 
 /**
  * GET /sitemap-products.xml
@@ -21,7 +23,7 @@ router.get('/sitemap-products.xml', async (req, res) => {
 
     const urls = result.rows.map(p => `
   <url>
-    <loc>${SITE_URL}/HTML/producto.html?id=${p.id}</loc>
+    <loc>${SITE_URL}/producto?id=${p.id}</loc>
     <lastmod>${new Date(p.updated_at).toISOString().split('T')[0]}</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
@@ -56,7 +58,7 @@ router.get('/sitemap-services.xml', async (req, res) => {
 
     const urls = result.rows.map(s => `
   <url>
-    <loc>${SITE_URL}/HTML/servicio.html?id=${s.id}</loc>
+    <loc>${SITE_URL}/servicio?id=${s.id}</loc>
     <lastmod>${new Date(s.updated_at).toISOString().split('T')[0]}</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
