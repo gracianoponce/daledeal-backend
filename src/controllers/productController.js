@@ -285,7 +285,7 @@ const getProductById = async (req, res) => {
          p.*,
          pc.name AS category_name, pc.slug AS category_slug,
          u.id AS seller_id, u.name AS seller_name,
-         u.avatar_url AS seller_avatar, u.phone AS seller_phone,
+         u.avatar_url AS seller_avatar,  -- sin teléfono: el endpoint es público y el front no lo usa
          u.location AS seller_location, u.created_at AS seller_since,
          COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,
          COALESCE(rs.review_count, 0)::INT AS review_count
