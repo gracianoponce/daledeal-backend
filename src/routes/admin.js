@@ -15,7 +15,7 @@ const {
 } = require('../controllers/adminController');
 const { listReports, updateReport } = require('../controllers/reportsController');
 const { refundOrder } = require('../controllers/paymentsController');
-const { listLeads, updateLead } = require('../controllers/contactController');
+const { listLeads, updateLead, listContactMessages } = require('../controllers/contactController');
 const { listSubscribers } = require('../controllers/newsletterController');
 const { listVerifications, reviewVerification } = require('../controllers/verificationController');
 const { listReleasable, listReleased, releaseOrder, holdOrder } = require('../controllers/payoutController');
@@ -64,6 +64,10 @@ router.post('/orders/:id/hold', holdOrder);
 // PATCH  /admin/leads/:id     — actualiza status / notes
 router.get('/leads',         listLeads);
 router.patch('/leads/:id',   updateLead);
+
+// Mensajes del formulario de contacto (todos: general y empresa)
+// GET    /admin/contact-messages — lista paginada, ?tipo= para filtrar
+router.get('/contact-messages', listContactMessages);
 
 // Newsletter subscribers
 router.get('/newsletter/subscribers', listSubscribers);

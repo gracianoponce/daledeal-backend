@@ -110,9 +110,11 @@ const updateProfile = async (req, res) => {
     const result = await db.query(
       `UPDATE users SET
          name       = COALESCE($1, name),
-         phone      = COALESCE($2, phone),
-         location   = COALESCE($3, location),
-         avatar_url = COALESCE($4, avatar_url),
+         -- '' borra el dato (antes no se podía quitar el teléfono ni la
+         -- ubicación); si el campo no viene, queda como está.
+         phone      = CASE WHEN $2::text IS NULL THEN phone      WHEN $2 = '' THEN NULL ELSE $2 END,
+         location   = CASE WHEN $3::text IS NULL THEN location   WHEN $3 = '' THEN NULL ELSE $3 END,
+         avatar_url = CASE WHEN $4::text IS NULL THEN avatar_url WHEN $4 = '' THEN NULL ELSE $4 END,
          updated_at = NOW()
        WHERE id = $5
        RETURNING id, name, email, phone, location, avatar_url, updated_at`,
@@ -136,6 +138,7 @@ const getMyProducts = async (req, res) => {
        FROM products p
        LEFT JOIN product_categories pc ON p.category_id = pc.id
        WHERE p.seller_id = $1
+         AND p.status <> 'deleted'
        ORDER BY p.created_at DESC`,
       [req.user.id]
     );
@@ -155,6 +158,7 @@ const getMyServices = async (req, res) => {
        FROM services s
        LEFT JOIN service_categories sc ON s.category_id = sc.id
        WHERE s.provider_id = $1
+         AND s.status <> 'deleted'
        ORDER BY s.created_at DESC`,
       [req.user.id]
     );

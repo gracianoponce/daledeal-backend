@@ -314,6 +314,46 @@ async function listLeads(req, res) {
 }
 
 /**
+ * GET /admin/contact-messages
+ * Todos los mensajes del formulario de contacto (general y empresa), del más
+ * nuevo al más viejo. Antes solo se podían ver por mail o en el backup.
+ * Query params: ?page=1&limit=20&tipo=general|empresa
+ */
+async function listContactMessages(req, res) {
+  const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const offset = (page - 1) * limit;
+  const tipo = ['general', 'empresa'].includes(req.query.tipo) ? req.query.tipo : null;
+  const where = tipo ? 'WHERE tipo = $1' : '';
+  const params = tipo ? [tipo] : [];
+
+  try {
+    const countRes = await db.query(`SELECT count(*)::int AS total FROM contact_messages ${where}`, params);
+    const dataRes = await db.query(
+      `SELECT id, nombre, apellido, email, telefono, asunto, mensaje, tipo, pedido_id, created_at
+         FROM contact_messages
+         ${where}
+         ORDER BY created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    res.json({
+      data: dataRes.rows,
+      page,
+      limit,
+      total: countRes.rows[0].total,
+      pages: Math.ceil(countRes.rows[0].total / limit),
+    });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return res.status(503).json({ error: 'Tabla contact_messages no existe. Correr migration 012.' });
+    }
+    console.error('[admin/contact-messages] Error:', err);
+    res.status(500).json({ error: 'Error al listar los mensajes de contacto' });
+  }
+}
+
+/**
  * PATCH /admin/leads/:id
  * Actualiza status / notes de un lead. Body: { status?, notes? }
  */
@@ -356,4 +396,4 @@ async function updateLead(req, res) {
   }
 }
 
-module.exports = { submitContact, listLeads, updateLead };
+module.exports = { submitContact, listLeads, updateLead, listContactMessages };

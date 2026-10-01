@@ -19,17 +19,30 @@ const SAFE_URL_REGEX = /^https?:\/\/[^\s<>"']+$/i;
  * sin escapar las " se rompe el atributo y se ejecuta el handler. Escapar
  * &, ', " junto con <, > cierra todos los vectores XSS comunes.
  */
-function sanitize(str) {
+function sanitize(str, { multiline = false } = {}) {
   if (typeof str !== 'string') return str;
-  return str
+  const escaped = str
     .trim()
     .replace(/&/g, '&amp;')   // primero & para no doble-escapar
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-    .replace(/\s+/g, ' ');
+    .replace(/'/g, '&#039;');
+  // Campos de varias líneas (mensajes, reseñas, reportes): conservan los
+  // saltos de línea (máx. 2 seguidos). Antes todo quedaba en un solo párrafo.
+  if (multiline) {
+    return escaped
+      .replace(/\r\n?/g, '\n')
+      .replace(/[^\S\n]+/g, ' ')
+      .replace(/ ?\n ?/g, '\n')
+      .replace(/\n{3,}/g, '\n\n');
+  }
+  return escaped.replace(/\s+/g, ' ');
 }
+
+// Campos del body que son texto libre de varias líneas. El resto (títulos,
+// emails, asuntos…) sigue en una sola línea.
+const MULTILINE_FIELDS = new Set(['body', 'initial_message', 'mensaje', 'notes', 'admin_notes', 'note']);
 
 /**
  * Inversa exacta de sanitize() para los 5 caracteres que escapa: lo guardado
@@ -100,7 +113,7 @@ function sanitizeBody(req, res, next) {
   if (req.body && typeof req.body === 'object') {
     for (const key of Object.keys(req.body)) {
       if (typeof req.body[key] === 'string') {
-        req.body[key] = sanitize(req.body[key]);
+        req.body[key] = sanitize(req.body[key], { multiline: MULTILINE_FIELDS.has(key) });
       }
     }
   }
