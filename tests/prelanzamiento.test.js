@@ -211,6 +211,18 @@ describe('POST /payments/webhook', () => {
     expect(mpGet).toHaveBeenCalledWith({ id: '111' });
   });
 
+  test('aviso en el formato viejo de MP (sin data.id) → 200, sin contarlo como firma inválida', async () => {
+    const spy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    process.env.MP_WEBHOOK_SECRET = 'secreto-bueno';
+    const res = await request(app).post('/payments/webhook?topic=merchant_order&id=987')
+      .set('x-request-id', 'req-7').set('x-signature', 'ts=1700000000,v1=abc123')
+      .send({ resource: 'https://api.mercadolibre.com/merchant_orders/987', topic: 'merchant_order' });
+    spy.mockRestore();
+    expect(res.status).toBe(200);
+    expect(mpGet).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.some(([sql]) => /INSERT INTO payment_events/i.test(sql))).toBe(false);
+  });
+
   test('aprobado repetido sobre una orden despachada → no cambia la orden ni reenvía mails', async () => {
     mpGet.mockResolvedValue(mpPayment());
     const client = wireOrder({ status: 'shipped', payment_status: 'paid', mp_payment_id: '111' });

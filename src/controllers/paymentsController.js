@@ -539,10 +539,23 @@ const handleWebhook = async (req, res) => {
 };
 
 async function processWebhook(req) {
-  const signatureValid = verifyWebhookSignature(req);
   const requestId      = req.headers['x-request-id'] || null;
   const topic          = req.query.topic || req.query.type || req.body?.type;
   const dataId         = req.query['data.id'] || req.body?.data?.id;
+
+  // Además del aviso que usamos (?type=payment&data.id=…), MP manda cada
+  // novedad en su formato viejo (?topic=payment&id=… y
+  // ?topic=merchant_order&id=…) a la notification_url de la preferencia. No
+  // traen data.id, así que no hay nada que procesar ni firma que validar: se
+  // responden con 200. Antes caían como "firma inválida" (401): MP los
+  // reintentaba y cada pago dejaba una tanda de errores en los logs y de filas
+  // en payment_events.
+  if (!dataId) {
+    console.log('[mp-webhook] Aviso sin data.id (formato viejo de MP), ignorado:', topic || 'sin topic');
+    return 'ignored';
+  }
+
+  const signatureValid = verifyWebhookSignature(req);
 
   // Si la firma es inválida — registramos para auditoría y abortamos.
   // Sin esto, un atacante con la URL del webhook podría marcar
@@ -560,7 +573,7 @@ async function processWebhook(req) {
             raw_payload, signature_valid, request_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)`,
         [
-          dataId ? String(dataId) : null,
+          String(dataId),
           String(topic || 'unknown').slice(0, 40),
           'rejected:invalid_signature',
           'rejected', 'invalid_signature',
@@ -581,11 +594,6 @@ async function processWebhook(req) {
       [requestId]
     );
     if (dupe.rows.length > 0) return 'duplicate';
-  }
-
-  if (!dataId) {
-    console.warn('[mp-webhook] Notificación sin data.id, ignorando');
-    return 'ignored';
   }
 
   // Solo nos importan los eventos de payment por ahora
