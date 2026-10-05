@@ -236,6 +236,26 @@ describe('POST /payments/webhook', () => {
 });
 
 // ------------------------------------------------------------
+describe('Mails del circuito de pago', () => {
+  test('pago rechazado: el motivo va en palabras, nunca el código de MP', () => {
+    const t = email.paymentFailedBuyerTemplate({ buyerName: 'Ana', orderId: 7, productTitle: 'Mate', reason: 'cc_rejected_high_risk' });
+    expect(t.html).toContain('rechazó el pago por seguridad');
+    expect(t.text).toContain('rechazó el pago por seguridad');
+    expect(t.html + t.text).not.toContain('cc_rejected');
+
+    const desconocido = email.paymentFailedBuyerTemplate({ orderId: 7, reason: 'cc_rejected_algo_nuevo' });
+    expect(desconocido.html + desconocido.text).not.toContain('cc_rejected');
+    expect(desconocido.text).toContain('No pudimos cobrar tu pago de la orden #7.');
+  });
+
+  test('venta nueva: el asunto lleva el título tal cual, sin entidades HTML', () => {
+    const t = email.newSaleSellerTemplate({ orderId: 1, productTitle: 'Mate &amp; bombilla 14&quot;', buyerName: 'Y', total: 100 });
+    expect(t.subject).toBe('🎉 Vendiste "Mate & bombilla 14"" — Orden #1');
+    expect(email.newSaleSellerTemplate({ orderId: 1, buyerName: 'Y', total: 100 }).subject).toBe('🎉 Vendiste "un producto" — Orden #1');
+  });
+});
+
+// ------------------------------------------------------------
 describe('GET /payments/:orderId/status → reconciliación al volver de MP', () => {
   const statusRow = (over = {}) => ({
     id: 42, buyer_id: 7, seller_id: 9, status: 'pending', payment_status: 'pending',

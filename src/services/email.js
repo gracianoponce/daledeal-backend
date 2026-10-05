@@ -251,15 +251,34 @@ function newSaleSellerTemplate({ sellerName, orderId, productTitle, buyerName, t
     <p style="text-align:center;margin:28px 0;">${btn('Ir a Mis ventas', 'https://daledeal.com.ar/HTML/mis-ventas.html')}</p>
   `;
   return {
-    subject: `🎉 Vendiste "${productTitle || 'un producto'}" — Orden #${orderId}`,
+    // El título se guarda escapado; en un asunto no hay HTML que lo interprete.
+    subject: `🎉 Vendiste "${decodeHtmlEntities(productTitle) || 'un producto'}" — Orden #${orderId}`,
     html:    emailWrap(inner, { title: 'Venta nueva' }),
     text:    `Venta nueva en Dale Deal\nOrden #${orderId}\nProducto: ${decodeHtmlEntities(productTitle)}\nTotal: ${totalFmt}\nComprador: ${decodeHtmlEntities(buyerName)}\n\nGestionala en: https://daledeal.com.ar/HTML/mis-ventas.html${needsPayoutAccount ? '\nCargá tus datos de cobro: https://daledeal.com.ar/mi-cuenta#datos-cobro' : ''}`,
   };
 }
 
+// Motivos de rechazo de Mercado Pago (status_detail) dichos para el comprador.
+// Los que no están acá no se muestran: el código crudo
+// ("cc_rejected_high_risk") no le dice nada a quien compra.
+const PAYMENT_REJECTION_REASONS = {
+  cc_rejected_high_risk:                'Mercado Pago rechazó el pago por seguridad. Probá con otro medio de pago.',
+  cc_rejected_insufficient_amount:      'El medio de pago no tenía fondos suficientes.',
+  cc_rejected_bad_filled_card_number:   'El número de la tarjeta no era correcto.',
+  cc_rejected_bad_filled_date:          'La fecha de vencimiento de la tarjeta no era correcta.',
+  cc_rejected_bad_filled_security_code: 'El código de seguridad de la tarjeta no era correcto.',
+  cc_rejected_bad_filled_other:         'Algún dato de la tarjeta no era correcto.',
+  cc_rejected_call_for_authorize:       'Tu banco necesita que autorices el pago: comunicate con ellos y volvé a intentar.',
+  cc_rejected_card_disabled:            'La tarjeta está inactiva: comunicate con tu banco para activarla.',
+  cc_rejected_max_attempts:             'Llegaste al límite de intentos con esa tarjeta. Probá con otro medio de pago.',
+  cc_rejected_invalid_installments:     'La tarjeta no acepta esa cantidad de cuotas.',
+  cc_rejected_duplicated_payment:       'Ya habías hecho un pago igual instantes antes.',
+};
+
 function paymentFailedBuyerTemplate({ buyerName, orderId, productTitle, reason }) {
-  const reasonText = reason
-    ? `<p style="font-size:13px;color:#6b7280;">Motivo informado por Mercado Pago: <strong>${escapeHtml(reason)}</strong>.</p>`
+  const motivo = PAYMENT_REJECTION_REASONS[reason] || '';
+  const reasonText = motivo
+    ? `<p style="font-size:13px;color:#6b7280;">${escapeHtml(motivo)}</p>`
     : '';
   const inner = `
     <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">No pudimos cobrar tu pago</h2>
@@ -272,7 +291,7 @@ function paymentFailedBuyerTemplate({ buyerName, orderId, productTitle, reason }
   return {
     subject: `No pudimos cobrar tu pago · Orden #${orderId}`,
     html:    emailWrap(inner, { title: 'Pago rechazado' }),
-    text:    `No pudimos cobrar tu pago de la orden #${orderId}.${reason ? ' Motivo: ' + reason + '.' : ''}\nReintentá desde: https://daledeal.com.ar/HTML/notificaciones.html#mis-compras`,
+    text:    `No pudimos cobrar tu pago de la orden #${orderId}.${motivo ? ' ' + motivo : ''}\nReintentá desde: https://daledeal.com.ar/HTML/notificaciones.html#mis-compras`,
   };
 }
 
