@@ -438,13 +438,17 @@ async function applyPaymentUpdate(mpPayment, { topic, action, requestId = null, 
     decision = decidePaymentTransition(order, paymentId, newStatus);
 
     if (decision.apply) {
+      // $2 se usa dos veces: sin el ::text Postgres le deduce un tipo distinto
+      // en cada lugar (varchar por la columna, text por la comparación) y
+      // rechaza la consulta entera (42P08). Así ningún aviso de MP llegaba a
+      // guardarse: la orden quedaba 'pending' aunque el pago estuviera aprobado.
       await client.query(
         `UPDATE orders
             SET mp_payment_id  = $1,
-                payment_status = $2,
+                payment_status = $2::text,
                 status         = $3,
                 release_status = COALESCE($4, release_status),
-                paid_at = CASE WHEN $2 = 'paid' AND paid_at IS NULL THEN NOW() ELSE paid_at END,
+                paid_at = CASE WHEN $2::text = 'paid' AND paid_at IS NULL THEN NOW() ELSE paid_at END,
                 updated_at = NOW()
           WHERE id = $5`,
         [paymentId, decision.payment_status, decision.status, decision.release_status || null, orderId]
@@ -905,11 +909,14 @@ const refundOrder = async (req, res) => {
     const newPaymentStatus = isPartial ? 'paid' : 'refunded';
     const newOrderStatus   = isPartial ? order.status : 'cancelled';
 
+    // Mismo cuidado que en applyPaymentUpdate: $1 va dos veces y necesita el
+    // ::text en ambas (si no, 42P08 y la orden quedaba 'paid' con la plata ya
+    // devuelta por MP).
     await client.query(
       `UPDATE orders
-          SET payment_status = $1,
+          SET payment_status = $1::text,
               status         = $2,
-              release_status = CASE WHEN $1 = 'refunded' THEN 'refunded' ELSE release_status END,
+              release_status = CASE WHEN $1::text = 'refunded' THEN 'refunded' ELSE release_status END,
               updated_at     = NOW()
         WHERE id = $3`,
       [newPaymentStatus, newOrderStatus, order.id]
