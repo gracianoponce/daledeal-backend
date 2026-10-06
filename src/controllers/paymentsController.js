@@ -497,7 +497,15 @@ async function applyPaymentUpdate(mpPayment, { topic, action, requestId = null, 
     client.release();
   }
 
-  if (decision.apply) console.log(`[mp] Orden ${orderId} → ${decision.payment_status} (${topic})`);
+  if (decision.apply) {
+    // Lo que hace falta para entender un rechazo sin entrar a la base: el
+    // motivo de MP, si fue un pago de prueba (live_mode=false), el medio (con
+    // el BIN, que identifica a las tarjetas de prueba) y el monto. Nada del
+    // comprador.
+    const bin = mpPayment.card?.first_six_digits ? ` ${mpPayment.card.first_six_digits}…` : '';
+    console.log(`[mp] Orden ${orderId} → ${decision.payment_status} (${topic}) · ${mpPayment.status_detail || '-'}`
+      + ` · live_mode=${mpPayment.live_mode} · ${mpPayment.payment_method_id || '-'}${bin} · $${mpPayment.transaction_amount ?? '-'}`);
+  }
   if (decision.alert) {
     console.error(`[mp] ALERTA orden ${orderId} (pago ${paymentId}): ${PAYMENT_ALERTS[decision.alert]}`);
   }
