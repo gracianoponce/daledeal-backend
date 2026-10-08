@@ -24,6 +24,7 @@ const tokenFor = (id, role = 'user') =>
   jwt.sign({ id, email: `u${id}@test.com`, role }, process.env.JWT_SECRET, { expiresIn: '1h' });
 const png = 'data:image/png;base64,' + Buffer.from('fake-png-bytes').toString('base64');
 const AUTH_SQL = /SELECT is_active FROM users WHERE id/;
+const ROLE_SQL = /SELECT role, is_active FROM users WHERE id/; // requireAdmin: el id 1 es admin
 const flush = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
 
 // Cliente de transacción falso: responde según el SQL y guarda lo que corrió.
@@ -44,6 +45,7 @@ function fakeClient(handler) {
 // db.query por defecto: la sesión está activa; el resto, vacío.
 const defaultQuery = (handler) => async (sql, params) => {
   if (AUTH_SQL.test(sql)) return { rowCount: 1, rows: [{ is_active: true }] };
+  if (ROLE_SQL.test(sql)) return { rowCount: 1, rows: [{ role: params?.[0] === 1 ? 'admin' : 'user', is_active: true }] };
   return (handler && await handler(sql, params)) || { rowCount: 0, rows: [] };
 };
 
@@ -109,5 +111,42 @@ describe('POST /verifications/documents', () => {
       .send({ dni_front: png, dni_back: png, selfie: png, consent: true });
     expect(res.status).toBe(409);
     expect(client.sqls.map(q => q.sql)).toContain('ROLLBACK');
+  });
+});
+
+describe('documentos: listado y descarga', () => {
+  test('GET /verifications/me trae los documentos de cada pedido sin los bytes', async () => {
+    db.query.mockImplementation(defaultQuery(async (sql) => {
+      if (/FROM users WHERE id/.test(sql)) return { rowCount: 1, rows: [{ verified_identity: false, verified_professional: false, verified_background: false, verified_at: null }] };
+      if (/FROM verification_requests/.test(sql)) return { rowCount: 1, rows: [{ id: 11, type: 'identity', status: 'pending', admin_note: null, created_at: 'x', reviewed_at: null }] };
+      if (/FROM verification_documents/.test(sql)) return { rowCount: 1, rows: [{ id: 5, request_id: 11, kind: 'dni_front', mime: 'image/jpeg', size: 1234 }] };
+    }));
+    const res = await request(app).get('/verifications/me').set('Authorization', `Bearer ${tokenFor(7)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.requests[0].documents).toEqual([{ id: 5, kind: 'dni_front', mime: 'image/jpeg', size: 1234 }]);
+  });
+  test('GET /admin/verifications trae los documentos y los datos cargados al aprobar', async () => {
+    db.query.mockImplementation(defaultQuery(async (sql) => {
+      if (/FROM verification_requests v/.test(sql)) return { rowCount: 1, rows: [{ id: 11, type: 'identity', status: 'pending', user_id: 7, user_name: 'Pedro', user_email: 'p@test.com', document_name: null, document_number: null, credential: null }] };
+      if (/FROM verification_documents/.test(sql)) return { rowCount: 2, rows: [{ id: 5, request_id: 11, kind: 'dni_front', mime: 'image/jpeg', size: 10 }, { id: 6, request_id: 11, kind: 'selfie', mime: 'image/jpeg', size: 10 }] };
+    }));
+    const res = await request(app).get('/admin/verifications?status=pending').set('Authorization', `Bearer ${tokenFor(1, 'admin')}`);
+    expect(res.status).toBe(200);
+    expect(res.body.requests[0].documents.map(d => d.kind)).toEqual(['dni_front', 'selfie']);
+  });
+  test('GET /admin/verification-documents/:id devuelve el archivo solo a un admin', async () => {
+    db.query.mockImplementation(defaultQuery(async (sql) => /FROM verification_documents WHERE id/.test(sql)
+      ? { rowCount: 1, rows: [{ mime: 'image/png', bytes: Buffer.from('fake-png-bytes') }] } : undefined));
+    const noAdmin = await request(app).get('/admin/verification-documents/5').set('Authorization', `Bearer ${tokenFor(7)}`);
+    expect(noAdmin.status).toBe(403);
+    const res = await request(app).get('/admin/verification-documents/5').set('Authorization', `Bearer ${tokenFor(1, 'admin')}`);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/image\/png/);
+    expect(res.headers['cache-control']).toMatch(/no-store/);
+    expect(res.body.toString()).toBe('fake-png-bytes');
+  });
+  test('documento inexistente o ya borrado → 404', async () => {
+    const res = await request(app).get('/admin/verification-documents/999').set('Authorization', `Bearer ${tokenFor(1, 'admin')}`);
+    expect(res.status).toBe(404);
   });
 });

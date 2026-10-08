@@ -139,6 +139,26 @@ async function uploadDocuments(req, res) {
   }
 }
 
+/** Documentos (sin los bytes) de una lista de pedidos, agrupados por request_id.
+ *  Si la migración 018 no está aplicada, devuelve vacío. */
+async function documentsFor(requestRows) {
+  const ids = requestRows.map(r => r.id);
+  if (!ids.length) return requestRows.map(r => ({ ...r, documents: [] }));
+  let docs = [];
+  try {
+    docs = (await db.query(
+      `SELECT id, request_id, kind, mime, size FROM verification_documents WHERE request_id = ANY($1::int[]) ORDER BY id`,
+      [ids]
+    )).rows;
+  } catch (err) {
+    if (!migPending(err)) throw err;
+  }
+  return requestRows.map(r => ({
+    ...r,
+    documents: docs.filter(d => d.request_id === r.id).map(({ id, kind, mime, size }) => ({ id, kind, mime, size })),
+  }));
+}
+
 // GET /verifications/me  (auth) — estado propio + historial de pedidos
 async function getMyVerification(req, res) {
   try {
@@ -154,7 +174,7 @@ async function getMyVerification(req, res) {
         ORDER BY created_at DESC`,
       [req.user.id]
     );
-    return res.json({ ...(u.rows[0] || {}), requests: reqs.rows });
+    return res.json({ ...(u.rows[0] || {}), requests: await documentsFor(reqs.rows) });
   } catch (err) {
     if (migPending(err)) {
       return res.json({ verified_identity: false, verified_professional: false, verified_background: false, verified_at: null, requests: [] });
@@ -169,20 +189,48 @@ async function listVerifications(req, res) {
   try {
     const status = ['pending', 'approved', 'rejected'].includes(req.query.status)
       ? req.query.status : 'pending';
-    const r = await db.query(
-      `SELECT v.id, v.type, v.status, v.contact_note, v.admin_note, v.created_at, v.reviewed_at,
-              u.id AS user_id, u.name AS user_name, u.email AS user_email, u.location AS user_location
-         FROM verification_requests v
-         JOIN users u ON u.id = v.user_id
-        WHERE v.status = $1
-        ORDER BY v.created_at ASC`,
-      [status]
-    );
-    return res.json({ status, total: r.rows.length, requests: r.rows });
+    const sql = (withDocCols) => `
+      SELECT v.id, v.type, v.status, v.contact_note, v.admin_note, v.created_at, v.reviewed_at,
+             ${withDocCols ? 'v.document_name, v.document_number, v.credential,' : ''}
+             u.id AS user_id, u.name AS user_name, u.email AS user_email, u.location AS user_location
+        FROM verification_requests v
+        JOIN users u ON u.id = v.user_id
+       WHERE v.status = $1
+       ORDER BY v.created_at ASC`;
+    let r;
+    try {
+      r = await db.query(sql(true), [status]);
+    } catch (err) {
+      if (err.code !== '42703') throw err; // migración 018 sin aplicar: sin las columnas nuevas
+      r = await db.query(sql(false), [status]);
+    }
+    const requests = await documentsFor(r.rows);
+    return res.json({ status, total: requests.length, requests });
   } catch (err) {
     if (migPending(err)) return res.json({ status: 'pending', total: 0, requests: [] });
     console.error('[verifications] list:', err.message);
     return res.status(500).json({ error: 'Error al listar verificaciones.' });
+  }
+}
+
+// GET /admin/verification-documents/:id  (admin) — el archivo, nunca por URL pública
+async function getDocument(req, res) {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'ID inválido.' });
+  try {
+    const r = await db.query('SELECT mime, bytes FROM verification_documents WHERE id = $1', [id]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'El documento no existe o ya fue eliminado.' });
+    res.set({
+      'Content-Type': r.rows[0].mime,
+      'Cache-Control': 'no-store',
+      'Content-Disposition': 'inline',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.send(r.rows[0].bytes);
+  } catch (err) {
+    if (migPending(err)) return res.status(404).json({ error: 'El documento no existe.' });
+    console.error('[verifications] document:', err.message);
+    return res.status(500).json({ error: 'No pudimos leer el documento.' });
   }
 }
 
@@ -243,4 +291,5 @@ module.exports = {
   getMyVerification,
   listVerifications,
   reviewVerification,
+  getDocument,
 };

@@ -17,7 +17,7 @@ const { listReports, updateReport } = require('../controllers/reportsController'
 const { refundOrder } = require('../controllers/paymentsController');
 const { listLeads, updateLead, listContactMessages } = require('../controllers/contactController');
 const { listSubscribers } = require('../controllers/newsletterController');
-const { listVerifications, reviewVerification } = require('../controllers/verificationController');
+const { listVerifications, reviewVerification, getDocument } = require('../controllers/verificationController');
 const { listReleasable, listReleased, releaseOrder, holdOrder } = require('../controllers/payoutController');
 
 // Toda la API admin requiere auth + rol admin
@@ -32,6 +32,8 @@ router.get('/stats/timeseries', getStatsTimeseries);
 // Verificaciones de prestadores: cola de revisión + aprobar/rechazar
 router.get('/verifications', listVerifications);
 router.post('/verifications/:id/review', reviewVerification);
+// GET /admin/verification-documents/:id → el archivo (DNI, cara, título) con el token del admin
+router.get('/verification-documents/:id', getDocument);
 
 // Usuarios
 router.get('/users',         listUsers);
