@@ -85,28 +85,39 @@ async function uploadDocuments(req, res) {
   if (req.body?.consent !== true) {
     return res.status(400).json({ error: 'Tenés que aceptar el uso de los documentos para verificar tu identidad.' });
   }
+  // Qué falta según lo que ya tiene aprobado: identidad (DNI + cara) y/o título.
+  let flags = {};
+  try {
+    const u = await db.query('SELECT verified_identity, verified_professional FROM users WHERE id = $1', [req.user.id]);
+    flags = u.rows[0] || {};
+  } catch (err) {
+    if (migPending(err)) return res.status(503).json({ error: 'La verificación todavía no está disponible.' });
+    throw err;
+  }
+  if (flags.verified_identity && flags.verified_professional) {
+    return res.status(409).json({ error: 'Tu cuenta ya está verificada.' });
+  }
   const docs = {};
   try {
-    for (const kind of DOC_KINDS.identity) {
-      if (!req.body?.[kind]) return res.status(400).json({ error: `Falta ${DOC_LABEL[kind]}.` });
-      docs[kind] = parseDataUrl(kind, req.body[kind]);
+    if (!flags.verified_identity) {
+      for (const kind of DOC_KINDS.identity) {
+        if (!req.body?.[kind]) return res.status(400).json({ error: `Falta ${DOC_LABEL[kind]}.` });
+        docs[kind] = parseDataUrl(kind, req.body[kind]);
+      }
     }
     if (req.body?.title) docs.title = parseDataUrl('title', req.body.title);
+    if (flags.verified_identity && !docs.title) {
+      return res.status(400).json({ error: 'Subí la foto o el PDF de tu título o matrícula.' });
+    }
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
-  const types = ['identity', ...(docs.title ? ['professional'] : [])];
+  const types = [...(flags.verified_identity ? [] : ['identity']), ...(docs.title && !flags.verified_professional ? ['professional'] : [])];
   const client = await db.pool.connect();
   try {
-    const u = await db.query('SELECT verified_identity, verified_professional FROM users WHERE id = $1', [req.user.id]);
-    const flags = u.rows[0] || {};
-    if (flags.verified_identity && (!docs.title || flags.verified_professional)) {
-      return res.status(409).json({ error: 'Tu cuenta ya está verificada.' });
-    }
     await client.query('BEGIN');
     const created = [];
     for (const type of types) {
-      if (flags[TYPE_COLS[type]]) continue; // ya tiene esa insignia: no duplicar
       const r = await client.query(
         `INSERT INTO verification_requests (user_id, type, contact_note)
          VALUES ($1, $2, $3)

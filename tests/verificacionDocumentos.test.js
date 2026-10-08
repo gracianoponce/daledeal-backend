@@ -93,6 +93,26 @@ describe('POST /verifications/documents', () => {
     expect(Buffer.isBuffer(docInserts[0].params[4])).toBe(true);
     expect(client.sqls.map(q => q.sql)).toContain('COMMIT');
   });
+  test('con identidad ya aprobada alcanza con el título → 201, un solo pedido professional', async () => {
+    db.query.mockImplementation(defaultQuery(async (sql) => /SELECT verified_identity, verified_professional/.test(sql)
+      ? { rowCount: 1, rows: [{ verified_identity: true, verified_professional: false }] } : undefined));
+    const client = fakeClient(async (sql, params) => {
+      if (/INSERT INTO verification_requests/.test(sql)) return { rowCount: 1, rows: [{ id: 12, type: params[1], status: 'pending' }] };
+    });
+    const res = await request(app).post('/verifications/documents').set('Authorization', `Bearer ${tokenFor(7)}`)
+      .send({ title: png, consent: true });
+    expect(res.status).toBe(201);
+    expect(res.body.requests.map(r => r.type)).toEqual(['professional']);
+    expect(client.sqls.filter(q => /INSERT INTO verification_documents/.test(q.sql))).toHaveLength(1);
+  });
+  test('con identidad aprobada y sin título → 400', async () => {
+    db.query.mockImplementation(defaultQuery(async (sql) => /SELECT verified_identity, verified_professional/.test(sql)
+      ? { rowCount: 1, rows: [{ verified_identity: true, verified_professional: false }] } : undefined));
+    const res = await request(app).post('/verifications/documents').set('Authorization', `Bearer ${tokenFor(7)}`)
+      .send({ dni_front: png, dni_back: png, selfie: png, consent: true });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/título/i);
+  });
   test('ya verificado → 409', async () => {
     db.query.mockImplementation(defaultQuery(async (sql) => /SELECT verified_identity, verified_professional/.test(sql)
       ? { rowCount: 1, rows: [{ verified_identity: true, verified_professional: true }] } : undefined));
