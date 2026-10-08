@@ -56,6 +56,89 @@ async function requestVerification(req, res) {
   }
 }
 
+// Documentos que pide cada tipo. Los archivos se guardan solo hasta la revisión
+// (migración 018): al aprobar o rechazar se borran.
+const DOC_KINDS = { identity: ['dni_front', 'dni_back', 'selfie'], professional: ['title'] };
+const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_IMAGE = 2 * 1024 * 1024;
+const MAX_PDF   = 4 * 1024 * 1024;
+const DOC_LABEL = { dni_front: 'el DNI de frente', dni_back: 'el DNI de dorso', selfie: 'la foto de tu cara', title: 'el título' };
+
+/** data URL → { mime, buf } validado por tipo y tamaño. Lanza Error con mensaje para el usuario. */
+function parseDataUrl(kind, dataUrl) {
+  const m = /^data:([a-z0-9/+.-]+);base64,([A-Za-z0-9+/=]+)$/i.exec(String(dataUrl || ''));
+  if (!m) throw new Error(`No pudimos leer ${DOC_LABEL[kind]}. Volvé a elegir el archivo.`);
+  const mime = m[1].toLowerCase();
+  const isPdf = mime === 'application/pdf';
+  if (isPdf && kind !== 'title') throw new Error(`${DOC_LABEL[kind]} tiene que ser una foto (JPG, PNG o WEBP).`);
+  if (!isPdf && !IMAGE_MIMES.includes(mime)) throw new Error(`Formato no soportado para ${DOC_LABEL[kind]}: usá JPG, PNG, WEBP${kind === 'title' ? ' o PDF' : ''}.`);
+  const buf = Buffer.from(m[2], 'base64');
+  if (!buf.length) throw new Error(`${DOC_LABEL[kind]} llegó vacío.`);
+  if (buf.length > (isPdf ? MAX_PDF : MAX_IMAGE)) throw new Error(`${DOC_LABEL[kind]} pesa demasiado (máximo ${isPdf ? '4' : '2'} MB).`);
+  return { mime, buf };
+}
+
+// POST /verifications/documents  (auth) — DNI frente/dorso + cara (+ título) →
+// pedidos pendientes con sus archivos, en una transacción.
+async function uploadDocuments(req, res) {
+  if (req.body?.consent !== true) {
+    return res.status(400).json({ error: 'Tenés que aceptar el uso de los documentos para verificar tu identidad.' });
+  }
+  const docs = {};
+  try {
+    for (const kind of DOC_KINDS.identity) {
+      if (!req.body?.[kind]) return res.status(400).json({ error: `Falta ${DOC_LABEL[kind]}.` });
+      docs[kind] = parseDataUrl(kind, req.body[kind]);
+    }
+    if (req.body?.title) docs.title = parseDataUrl('title', req.body.title);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  const types = ['identity', ...(docs.title ? ['professional'] : [])];
+  const client = await db.pool.connect();
+  try {
+    const u = await db.query('SELECT verified_identity, verified_professional FROM users WHERE id = $1', [req.user.id]);
+    const flags = u.rows[0] || {};
+    if (flags.verified_identity && (!docs.title || flags.verified_professional)) {
+      return res.status(409).json({ error: 'Tu cuenta ya está verificada.' });
+    }
+    await client.query('BEGIN');
+    const created = [];
+    for (const type of types) {
+      if (flags[TYPE_COLS[type]]) continue; // ya tiene esa insignia: no duplicar
+      const r = await client.query(
+        `INSERT INTO verification_requests (user_id, type, contact_note)
+         VALUES ($1, $2, $3)
+         RETURNING id, type, status`,
+        [req.user.id, type, 'Documentos adjuntos']
+      );
+      created.push(r.rows[0]);
+      for (const kind of DOC_KINDS[type]) {
+        const d = docs[kind];
+        await client.query(
+          `INSERT INTO verification_documents (request_id, user_id, kind, mime, bytes, size)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [r.rows[0].id, req.user.id, kind, d.mime, d.buf, d.buf.length]
+        );
+      }
+    }
+    await client.query('COMMIT');
+    return res.status(201).json({ ok: true, requests: created });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') { // índice único: ya hay un pedido pendiente de ese tipo
+      return res.status(409).json({ error: 'Ya tenés una verificación en revisión. Te avisamos por mail cuando esté.' });
+    }
+    if (migPending(err)) {
+      return res.status(503).json({ error: 'La verificación con documentos todavía no está disponible.' });
+    }
+    console.error('[verifications] documents:', err.message);
+    return res.status(500).json({ error: 'No pudimos guardar los documentos. Probá de nuevo.' });
+  } finally {
+    client.release();
+  }
+}
+
 // GET /verifications/me  (auth) — estado propio + historial de pedidos
 async function getMyVerification(req, res) {
   try {
@@ -156,6 +239,7 @@ async function reviewVerification(req, res) {
 
 module.exports = {
   requestVerification,
+  uploadDocuments,
   getMyVerification,
   listVerifications,
   reviewVerification,
