@@ -49,7 +49,10 @@ async function dumpDatabase(req, res) {
       WHERE schemaname = 'public'
       ORDER BY tablename
     `);
-    const tableNames = tablesRes.rows.map(r => r.tablename);
+    // Los documentos de verificación (fotos de DNI, migración 018) viven solo
+    // hasta la revisión y no salen de la base: el backup no los lleva.
+    const SIN_BACKUP = ['verification_documents'];
+    const tableNames = tablesRes.rows.map(r => r.tablename).filter(t => !SIN_BACKUP.includes(t));
 
     // 3. Dump cada tabla. Las identificadores van con comillas dobles para
     //    seguridad (vienen de pg_tables, no de user input, pero por las dudas).
