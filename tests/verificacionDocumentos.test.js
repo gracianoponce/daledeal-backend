@@ -150,3 +150,51 @@ describe('documentos: listado y descarga', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('POST /admin/verifications/:id/review con documentos', () => {
+  const wire = (type) => fakeClient(async (sql) => {
+    if (/FROM verification_requests WHERE id = \$1/.test(sql)) return { rowCount: 1, rows: [{ id: 11, user_id: 7, type, status: 'pending' }] };
+  });
+  beforeEach(() => {
+    db.query.mockImplementation(defaultQuery(async (sql) => /SELECT email, name FROM users/.test(sql)
+      ? { rowCount: 1, rows: [{ email: 'p@test.com', name: 'Pedro' }] } : undefined));
+  });
+  test('aprobar identidad sin nombre y DNI → 400 y nada cambia', async () => {
+    const client = wire('identity');
+    const res = await request(app).post('/admin/verifications/11/review').set('Authorization', `Bearer ${tokenFor(1, 'admin')}`)
+      .send({ decision: 'approve' });
+    expect(res.status).toBe(400);
+    expect(client.sqls.some(q => /UPDATE users/.test(q.sql))).toBe(false);
+    expect(client.sqls.map(q => q.sql)).toContain('ROLLBACK');
+  });
+  test('aprobar título sin el nombre del título → 400', async () => {
+    wire('professional');
+    const res = await request(app).post('/admin/verifications/11/review').set('Authorization', `Bearer ${tokenFor(1, 'admin')}`)
+      .send({ decision: 'approve' });
+    expect(res.status).toBe(400);
+  });
+  test('aprobar identidad con datos → insignia, datos guardados, archivos borrados, mail', async () => {
+    const client = wire('identity');
+    const res = await request(app).post('/admin/verifications/11/review').set('Authorization', `Bearer ${tokenFor(1, 'admin')}`)
+      .send({ decision: 'approve', document_name: 'Pedro Pérez', document_number: '30.123.456' });
+    expect(res.status).toBe(200);
+    const upd = client.sqls.find(q => /UPDATE verification_requests/.test(q.sql));
+    expect(upd.params).toEqual(expect.arrayContaining(['Pedro Pérez', '30.123.456']));
+    expect(client.sqls.some(q => /^\s*DELETE FROM verification_documents/i.test(q.sql))).toBe(true);
+    expect(client.sqls.some(q => /UPDATE users SET verified_identity = true/.test(q.sql))).toBe(true);
+    expect(client.sqls.map(q => q.sql)).toContain('COMMIT');
+    await flush();
+    expect(email.sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'p@test.com', subject: expect.stringMatching(/aprobada/i) }));
+  });
+  test('rechazar → archivos borrados y mail con el motivo', async () => {
+    const client = wire('professional');
+    const res = await request(app).post('/admin/verifications/11/review').set('Authorization', `Bearer ${tokenFor(1, 'admin')}`)
+      .send({ decision: 'reject', admin_note: 'El título no se lee' });
+    expect(res.status).toBe(200);
+    expect(client.sqls.some(q => /^\s*DELETE FROM verification_documents/i.test(q.sql))).toBe(true);
+    await flush();
+    expect(email.sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'p@test.com', subject: expect.stringMatching(/revisión/i) }));
+    const call = email.sendEmail.mock.calls[0][0];
+    expect(call.text).toContain('El título no se lee');
+  });
+});

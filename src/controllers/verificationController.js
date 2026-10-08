@@ -10,6 +10,7 @@
  * suave), para que el deploy del código no rompa nada si llega antes.
  */
 const db = require('../config/database');
+const { sendEmail, verificationApprovedTemplate, verificationRejectedTemplate } = require('../services/email');
 
 // Columna de users que "prende" cada tipo al aprobarse. background = antecedentes
 // penales validados contra el RNR por su código oficial (sin guardar documentos).
@@ -245,6 +246,11 @@ async function reviewVerification(req, res) {
     if (!['approve', 'reject'].includes(decision)) {
       return res.status(400).json({ error: "Decisión inválida. Usá 'approve' o 'reject'." });
     }
+    // Lo que queda guardado después de borrar los archivos: nombre y número tal
+    // como figuran en el DNI, o el título/matrícula (texto, migración 018).
+    const documentName   = clip(req.body?.document_name, 120);
+    const documentNumber = clip(req.body?.document_number, 20).replace(/[^\d.]/g, '');
+    const credential     = clip(req.body?.credential, 160);
 
     await client.query('BEGIN');
     const cur = await client.query(
@@ -259,14 +265,38 @@ async function reviewVerification(req, res) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Este pedido ya fue revisado.' });
     }
+    const type = cur.rows[0].type;
+    if (decision === 'approve' && type === 'identity'
+        && (documentName.length < 3 || documentNumber.replace(/\D/g, '').length < 7)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Para aprobar identidad cargá el nombre y el número de DNI tal como figuran en el documento.' });
+    }
+    if (decision === 'approve' && type === 'professional' && credential.length < 3) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Para aprobar el título cargá el nombre del título o la matrícula.' });
+    }
 
     const newStatus = decision === 'approve' ? 'approved' : 'rejected';
-    await client.query(
-      `UPDATE verification_requests
-          SET status = $1, admin_note = $2, reviewed_by = $3, reviewed_at = NOW()
-        WHERE id = $4`,
-      [newStatus, adminNote || null, req.user.id, id]
-    );
+    try {
+      await client.query(
+        `UPDATE verification_requests
+            SET status = $1, admin_note = $2, reviewed_by = $3, reviewed_at = NOW(),
+                document_name = $4, document_number = $5, credential = $6, documents_purged_at = NOW()
+          WHERE id = $7`,
+        [newStatus, adminNote || null, req.user.id, documentName || null, documentNumber || null, credential || null, id]
+      );
+      // Los archivos ya cumplieron su fin: se borran en la misma transacción.
+      await client.query('DELETE FROM verification_documents WHERE request_id = $1', [id]);
+    } catch (err) {
+      if (!migPending(err)) throw err;
+      // Migración 018 sin aplicar: revisión sin documentos, como antes.
+      await client.query(
+        `UPDATE verification_requests
+            SET status = $1, admin_note = $2, reviewed_by = $3, reviewed_at = NOW()
+          WHERE id = $4`,
+        [newStatus, adminNote || null, req.user.id, id]
+      );
+    }
     if (decision === 'approve') {
       const col = TYPE_COLS[cur.rows[0].type] || 'verified_identity';
       await client.query(
@@ -275,6 +305,14 @@ async function reviewVerification(req, res) {
       );
     }
     await client.query('COMMIT');
+    // Aviso al prestador, fuera de la transacción y sin frenar la respuesta.
+    db.query('SELECT email, name FROM users WHERE id = $1', [cur.rows[0].user_id]).then(({ rows }) => {
+      if (!rows[0]?.email) return;
+      const tpl = decision === 'approve'
+        ? verificationApprovedTemplate({ name: rows[0].name, type })
+        : verificationRejectedTemplate({ name: rows[0].name, type, reason: adminNote });
+      return sendEmail({ to: rows[0].email, subject: tpl.subject, html: tpl.html, text: tpl.text });
+    }).catch(err => console.error('[verifications] mail:', err.message));
     return res.json({ ok: true, id, status: newStatus });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});

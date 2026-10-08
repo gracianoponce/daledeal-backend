@@ -444,6 +444,43 @@ function welcomeEmailTemplate({ name, isFromGoogle = false }) {
   };
 }
 
+// ============================================================
+// Verificación de prestadores: resultado de la revisión
+// ============================================================
+const VERIF_LABEL = { identity: 'tu identidad', professional: 'tu título', background: 'tus antecedentes' };
+
+function verificationApprovedTemplate({ name, type }) {
+  const what = VERIF_LABEL[type] || 'tu cuenta';
+  const inner = `
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">✅ Verificamos ${escapeHtml(what)}</h2>
+    <p>Hola${name ? ' ' + escapeHtml(name) : ''},</p>
+    <p>Revisamos tus documentos y ya tenés la insignia de ${escapeHtml(what)} verificada. Los archivos que subiste se eliminaron: solo guardamos los datos del documento que verificamos.</p>
+    ${type === 'identity' ? '<p>Si también subiste tu título, lo revisamos aparte y te avisamos por otro mail.</p>' : ''}
+    <p style="text-align:center;margin:28px 0;">${btn('Publicar un servicio', 'https://daledeal.com.ar/publicar')}</p>
+  `;
+  return {
+    subject: `✅ Verificación aprobada: ${what}`,
+    html:    emailWrap(inner, { title: 'Verificación aprobada' }),
+    text:    `Verificamos ${what} en Dale Deal. Tus archivos se eliminaron; guardamos solo los datos del documento.\nPublicá un servicio: https://daledeal.com.ar/publicar`,
+  };
+}
+
+function verificationRejectedTemplate({ name, type, reason }) {
+  const what = VERIF_LABEL[type] || 'tu cuenta';
+  const inner = `
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">No pudimos verificar ${escapeHtml(what)}</h2>
+    <p>Hola${name ? ' ' + escapeHtml(name) : ''},</p>
+    <p>Revisamos tus documentos y no pudimos aprobar la verificación${reason ? `: <strong>${escapeHtml(reason)}</strong>` : '.'}</p>
+    <p>Podés volver a enviarlos desde Mi cuenta. Los archivos que subiste se eliminaron.</p>
+    <p style="text-align:center;margin:28px 0;">${btn('Volver a intentar', 'https://daledeal.com.ar/mi-cuenta#verificacion')}</p>
+  `;
+  return {
+    subject: 'Tu verificación necesita otra revisión',
+    html:    emailWrap(inner, { title: 'Verificación rechazada' }),
+    text:    `No pudimos verificar ${what}${reason ? ': ' + reason : ''}.\nVolvé a enviar los documentos desde https://daledeal.com.ar/mi-cuenta#verificacion`,
+  };
+}
+
 module.exports = {
   sendEmail,
   // Templates listos para usar
@@ -457,4 +494,6 @@ module.exports = {
   buyerConfirmedSellerTemplate,
   paymentFailedBuyerTemplate,
   welcomeEmailTemplate,
+  verificationApprovedTemplate,
+  verificationRejectedTemplate,
 };
