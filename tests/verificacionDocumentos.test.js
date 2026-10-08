@@ -198,3 +198,16 @@ describe('POST /admin/verifications/:id/review con documentos', () => {
     expect(call.text).toContain('El título no se lee');
   });
 });
+
+describe('POST /services exige verificación', () => {
+  test('sin las dos insignias → 403 VERIFICATION_REQUIRED', async () => {
+    db.query.mockImplementation(defaultQuery(async (sql) => /SELECT verified_identity, verified_professional FROM users/.test(sql)
+      ? { rowCount: 1, rows: [{ verified_identity: true, verified_professional: false }] } : undefined));
+    const res = await request(app).post('/services').set('Authorization', `Bearer ${tokenFor(7)}`)
+      .send({ title: 'Plomería', price_from: 1000, price_type: 'fixed' });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('VERIFICATION_REQUIRED');
+    expect(res.body.verified_identity).toBe(true);
+    expect(res.body.verified_professional).toBe(false);
+  });
+});

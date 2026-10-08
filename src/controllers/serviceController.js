@@ -219,6 +219,22 @@ const getServiceById = async (req, res) => {
 // POST /services  (requiere token)
 // ============================================================
 const createService = async (req, res) => {
+  // Solo prestadores verificados (identidad + título) ofrecen servicios. Editar
+  // un servicio que ya existe no se bloquea; los productos no exigen nada.
+  try {
+    const v = await db.query('SELECT verified_identity, verified_professional FROM users WHERE id = $1', [req.user.id]);
+    const f = v.rows[0] || {};
+    if (!f.verified_identity || !f.verified_professional) {
+      return res.status(403).json({
+        error: 'Para ofrecer servicios tenés que verificar tu identidad y tu título.',
+        code: 'VERIFICATION_REQUIRED',
+        verified_identity: !!f.verified_identity,
+        verified_professional: !!f.verified_professional,
+      });
+    }
+  } catch (err) {
+    if (err.code !== '42703') throw err; // sin la migración 013 no hay insignias: no bloquear
+  }
   const {
     title, description,
     price_from, price_to, currency = 'ARS', price_type = 'fixed',
