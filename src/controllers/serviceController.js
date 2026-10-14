@@ -1,5 +1,6 @@
 const db = require('../config/database');
 const { validateSafeUrl, parsePagination } = require('../middleware/validate');
+const { normalizePostBadges, postBadgesParam, query019 } = require('../services/badges');
 
 const ALLOWED_PRICE_TYPES = ['fixed', 'hourly', 'quote'];
 const ALLOWED_CURRENCIES  = ['ARS', 'USD'];
@@ -75,6 +76,10 @@ function validateServiceFields(b, { mode = 'create' } = {}) {
       return { ok: false, error: 'category_id inválido' };
     }
   }
+  if (b.badges !== undefined && b.badges !== null) {
+    const pb = normalizePostBadges(b.badges);
+    if (!pb.ok) return { ok: false, error: pb.error };
+  }
   return { ok: true };
 }
 
@@ -112,16 +117,18 @@ const getServices = async (req, res) => {
   params.push(limit, offset);
 
   try {
-    const result = await db.query(
+    const result = await query019(
       `SELECT
          s.id, s.title, s.price_from, s.price_to, s.currency, s.price_type,
          s.images, s.location, s.zones_covered, s.views, s.created_at,
+         s.badges, /*019*/
          LEFT(s.description, 160) AS description,
          sc.name AS category_name, sc.slug AS category_slug,
          u.id AS provider_id, u.name AS provider_name, u.avatar_url AS provider_avatar,
          u.verified_identity     AS provider_verified_identity,
          u.verified_professional AS provider_verified_professional,
          u.verified_background   AS provider_verified_background,
+         u.badges                AS provider_badges, /*019*/
          COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,
          COALESCE(rs.review_count, 0)::INT AS review_count
        FROM services s
@@ -174,7 +181,7 @@ const getServiceById = async (req, res) => {
   try {
     db.query('UPDATE services SET views = views + 1 WHERE id = $1', [id]).catch(() => {});
 
-    const result = await db.query(
+    const result = await query019(
       `SELECT
          s.*,
          sc.name AS category_name, sc.slug AS category_slug,
@@ -184,6 +191,7 @@ const getServiceById = async (req, res) => {
          u.verified_identity     AS provider_verified_identity,
          u.verified_professional AS provider_verified_professional,
          u.verified_background   AS provider_verified_background,
+         u.badges                AS provider_badges, /*019*/
          u.verified_at           AS provider_verified_at,
          COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,
          COALESCE(rs.review_count, 0)::INT AS review_count
@@ -238,7 +246,7 @@ const createService = async (req, res) => {
   const {
     title, description,
     price_from, price_to, currency = 'ARS', price_type = 'fixed',
-    category_id, images = [], location, zones_covered = []
+    category_id, images = [], location, zones_covered = [], badges,
   } = req.body;
 
   if (!title) {
@@ -250,17 +258,23 @@ const createService = async (req, res) => {
   if (!v.ok) return res.status(400).json({ error: v.error });
 
   try {
-    const result = await db.query(
+    const result = await query019(
       `INSERT INTO services
          (title, description, price_from, price_to, currency, price_type,
-          category_id, provider_id, images, location, zones_covered)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          category_id, provider_id, images, location, zones_covered
+          , badges /*019*/
+         )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
+          , $12::jsonb /*019*/
+         )
        RETURNING *`,
       [
         title, description, price_from || null, price_to || null,
         currency, price_type, category_id || null, req.user.id,
-        images, location, zones_covered
-      ]
+        images, location, zones_covered,
+        postBadgesParam(badges) || '[]',
+      ],
+      1
     );
 
     res.status(201).json(result.rows[0]);
@@ -275,7 +289,7 @@ const createService = async (req, res) => {
 // ============================================================
 const updateService = async (req, res) => {
   const { id } = req.params;
-  const { title, description, price_from, price_to, price_type, category_id, images, location, zones_covered, status } = req.body;
+  const { title, description, price_from, price_to, price_type, category_id, images, location, zones_covered, status, badges } = req.body;
 
   try {
     const check = await db.query('SELECT provider_id, status FROM services WHERE id = $1', [id]);
@@ -290,7 +304,7 @@ const updateService = async (req, res) => {
     const v = validateServiceFields(req.body, { mode: 'update' });
     if (!v.ok) return res.status(400).json({ error: v.error });
 
-    const result = await db.query(
+    const result = await query019(
       `UPDATE services SET
          title         = COALESCE($1, title),
          description   = COALESCE($2, description),
@@ -302,10 +316,13 @@ const updateService = async (req, res) => {
          location      = COALESCE($8, location),
          zones_covered = COALESCE($9, zones_covered),
          status        = COALESCE($10, status),
+         badges        = COALESCE($12::jsonb, badges), /*019*/
          updated_at    = NOW()
        WHERE id = $11
        RETURNING *`,
-      [title, description, price_from, price_to, price_type, category_id, images, location, zones_covered, status, id]
+      [title, description, price_from, price_to, price_type, category_id, images, location, zones_covered, status, id,
+       postBadgesParam(badges)],
+      1
     );
 
     res.json(result.rows[0]);

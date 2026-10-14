@@ -1,5 +1,6 @@
 const db = require('../config/database');
 const { parsePagination, parseSortOrder, validateSafeUrl } = require('../middleware/validate');
+const { normalizePostBadges, postBadgesParam, query019 } = require('../services/badges');
 
 const ALLOWED_CONDITIONS = ['new', 'used'];
 const ALLOWED_CURRENCIES = ['ARS', 'USD'];
@@ -70,6 +71,10 @@ function validateProductFields(b, { mode = 'create' } = {}) {
     if (!Number.isInteger(c) || c < 1) {
       return { ok: false, error: 'category_id inválido' };
     }
+  }
+  if (b.badges !== undefined && b.badges !== null) {
+    const pb = normalizePostBadges(b.badges);
+    if (!pb.ok) return { ok: false, error: pb.error };
   }
   return { ok: true };
 }
@@ -213,18 +218,21 @@ const getProducts = async (req, res) => {
   params.push(limit, offset);
 
   try {
-    const result = await db.query(
+    const result = await query019(
       `SELECT
          p.id, p.title, p.price, p.currency, p.condition, p.images,
          p.location, p.views, p.created_at,
          p.shipping_required, p.offers_delivery, p.offers_pickup,
          p.shipping_cost, p.pickup_address,
+         p.badges, /*019*/
          -- LEFT en lugar de description completo: en el listado solo
          -- necesitamos ~80 chars para el preview de la card. Evita traer
          -- descripciones largas (hasta varios KB) por cada item.
          LEFT(p.description, 160) AS description,
          pc.name AS category_name, pc.slug AS category_slug,
          u.id AS seller_id, u.name AS seller_name, u.avatar_url AS seller_avatar,
+         u.verified_identity AS seller_verified_identity, u.verified_professional AS seller_verified_professional,
+         u.badges AS seller_badges, /*019*/
          COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,
          COALESCE(rs.review_count, 0)::INT AS review_count
        FROM products p
@@ -280,13 +288,15 @@ const getProductById = async (req, res) => {
     // Incrementar vistas (no crítico — si falla, seguimos)
     db.query('UPDATE products SET views = views + 1 WHERE id = $1', [id]).catch(() => {});
 
-    const result = await db.query(
+    const result = await query019(
       `SELECT
          p.*,
          pc.name AS category_name, pc.slug AS category_slug,
          u.id AS seller_id, u.name AS seller_name,
          u.avatar_url AS seller_avatar,  -- sin teléfono: el endpoint es público y el front no lo usa
          u.location AS seller_location, u.created_at AS seller_since,
+         u.verified_identity AS seller_verified_identity, u.verified_professional AS seller_verified_professional,
+         u.badges AS seller_badges, /*019*/
          COALESCE(rs.avg_rating, 0)::FLOAT  AS avg_rating,
          COALESCE(rs.review_count, 0)::INT AS review_count
        FROM products p
@@ -324,7 +334,7 @@ const createProduct = async (req, res) => {
   const {
     title, description, price, currency = 'ARS',
     stock = 0, condition = 'new', category_id,
-    images = [], location,
+    images = [], location, badges,
     // Campos de envío (todos opcionales; default = sin envío)
     shipping_required, offers_delivery, offers_pickup,
     shipping_cost, pickup_address,
@@ -346,13 +356,17 @@ const createProduct = async (req, res) => {
   if (!ship.ok) return res.status(400).json({ error: ship.error });
 
   try {
-    const result = await db.query(
+    const result = await query019(
       `INSERT INTO products
          (title, description, price, currency, stock, condition,
           category_id, seller_id, images, location,
           shipping_required, offers_delivery, offers_pickup,
-          shipping_cost, pickup_address)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          shipping_cost, pickup_address
+          , badges /*019*/
+         )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+          , $16::jsonb /*019*/
+         )
        RETURNING *`,
       [
         title, description, price, currency, stock, condition,
@@ -360,7 +374,9 @@ const createProduct = async (req, res) => {
         ship.fields.shipping_required, ship.fields.offers_delivery,
         ship.fields.offers_pickup, ship.fields.shipping_cost,
         ship.fields.pickup_address,
-      ]
+        postBadgesParam(badges) || '[]',
+      ],
+      1
     );
 
     res.status(201).json(result.rows[0]);
@@ -380,7 +396,7 @@ const updateProduct = async (req, res) => {
   const { id } = req.params;
   const {
     title, description, price, stock, condition, category_id,
-    images, location, status,
+    images, location, status, badges,
     // Campos de envío: si shipping_required viene definido,
     // reescribimos todo el bloque de envío con validación.
     shipping_required, offers_delivery, offers_pickup,
@@ -413,7 +429,7 @@ const updateProduct = async (req, res) => {
       if (!ship.ok) return res.status(400).json({ error: ship.error });
     }
 
-    const result = await db.query(
+    const result = await query019(
       `UPDATE products SET
          title             = COALESCE($1, title),
          description       = COALESCE($2, description),
@@ -429,6 +445,7 @@ const updateProduct = async (req, res) => {
          offers_pickup     = COALESCE($13, offers_pickup),
          shipping_cost     = CASE WHEN $11 IS NULL THEN shipping_cost  ELSE $14 END,
          pickup_address    = CASE WHEN $11 IS NULL THEN pickup_address ELSE $15 END,
+         badges            = COALESCE($16::jsonb, badges), /*019*/
          updated_at        = NOW()
        WHERE id = $10
        RETURNING *`,
@@ -440,7 +457,9 @@ const updateProduct = async (req, res) => {
         ship ? ship.fields.offers_pickup     : null,
         ship ? ship.fields.shipping_cost     : null,
         ship ? ship.fields.pickup_address    : null,
-      ]
+        postBadgesParam(badges),
+      ],
+      1
     );
 
     res.json(result.rows[0]);

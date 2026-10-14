@@ -1,4 +1,5 @@
 const db = require('../config/database');
+const { normalizeUserBadges, query019 } = require('../services/badges');
 
 // ============================================================
 // GET /admin/stats — Dashboard
@@ -165,8 +166,10 @@ const listUsers = async (req, res) => {
   params.push(lim, offset);
 
   try {
-    const result = await db.query(
+    const result = await query019(
       `SELECT id, name, email, phone, location, role, is_active, created_at,
+              verified_identity, verified_professional,
+              badges, /*019*/
               (SELECT COUNT(*)::int FROM products WHERE seller_id   = users.id AND status='active') AS product_count,
               (SELECT COUNT(*)::int FROM services WHERE provider_id = users.id AND status='active') AS service_count,
               (SELECT COUNT(*)::int FROM orders   WHERE buyer_id    = users.id) AS purchase_count
@@ -197,14 +200,16 @@ const listUsers = async (req, res) => {
 };
 
 // ============================================================
-// PATCH /admin/users/:id — Modificar usuario (suspender, cambiar rol)
-// Body: { is_active?, role? }
+// PATCH /admin/users/:id — Modificar usuario (suspender, cambiar rol,
+// insignias). Body: { is_active?, role?, badges? }
 // ============================================================
 const updateUser = async (req, res) => {
   const { id } = req.params;
-  const { is_active, role } = req.body;
+  const { is_active, role, badges } = req.body;
 
-  if (parseInt(id, 10) === req.user.id) {
+  // Suspenderse o quitarse el rol a sí mismo no; las insignias propias sí
+  // (el CEO se pone la suya).
+  if (parseInt(id, 10) === req.user.id && (is_active !== undefined || role !== undefined)) {
     return res.status(400).json({ error: 'No podés modificar tu propia cuenta de admin desde acá' });
   }
 
@@ -212,20 +217,29 @@ const updateUser = async (req, res) => {
     return res.status(400).json({ error: "role debe ser 'user' o 'admin'" });
   }
 
+  let badgeList = null;
+  if (badges !== undefined && badges !== null) {
+    const nb = normalizeUserBadges(badges);
+    if (!nb.ok) return res.status(400).json({ error: nb.error });
+    badgeList = JSON.stringify(nb.badges);
+  }
+
   try {
-    const result = await db.query(
-      `UPDATE users
+    const sql = `UPDATE users
           SET is_active = COALESCE($1, is_active),
               role      = COALESCE($2, role),
+              badges    = COALESCE($4::jsonb, badges), /*019*/
               updated_at = NOW()
         WHERE id = $3
-        RETURNING id, name, email, role, is_active`,
-      [
-        typeof is_active === 'boolean' ? is_active : null,
-        role || null,
-        id,
-      ]
-    );
+        RETURNING id, name, email, role, is_active`;
+    const params = [
+      typeof is_active === 'boolean' ? is_active : null,
+      role || null,
+      id,
+      badgeList,
+    ];
+    // Con insignias en el pedido no vale el fallback: sin la 019 no hay dónde guardarlas.
+    const result = badgeList === null ? await query019(sql, params, 1) : await db.query(sql, params);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
@@ -233,6 +247,9 @@ const updateUser = async (req, res) => {
 
     res.json({ message: 'Usuario actualizado', user: result.rows[0] });
   } catch (err) {
+    if (err.code === '42703') {
+      return res.status(503).json({ error: 'Las insignias todavía no están habilitadas (falta la migración 019).' });
+    }
     console.error('Error en admin updateUser:', err);
     res.status(500).json({ error: 'Error al actualizar usuario' });
   }
