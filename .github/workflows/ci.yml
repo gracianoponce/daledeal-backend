@@ -45,7 +45,10 @@ jobs:
       # arranque y el CI venía rojo desde junio sin correr un solo test.
       MP_ACCESS_TOKEN: 'TEST-ci-only-not-a-real-token'
       MP_PUBLIC_KEY:   ''
-      MP_WEBHOOK_SECRET: ''
+      # Con secret, un aviso sin firma se ignora (200) como en producción; sin
+      # secret el webhook aceptaba el aviso, iba a buscar el pago a Mercado
+      # Pago con el token de relleno y terminaba en 500.
+      MP_WEBHOOK_SECRET: 'ci-only-webhook-secret-not-real'
 
     steps:
       - name: Checkout
