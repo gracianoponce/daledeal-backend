@@ -207,6 +207,10 @@ const updateUser = async (req, res) => {
   const { id } = req.params;
   const { is_active, role, badges } = req.body;
 
+  // Solo un entero decimal: Postgres acepta '0x1' como 1 y parseInt no,
+  // y con eso se esquivaba la guardia de la propia cuenta.
+  if (!/^\d+$/.test(String(id))) return res.status(400).json({ error: 'id inválido' });
+
   // Suspenderse o quitarse el rol a sí mismo no; las insignias propias sí
   // (el CEO se pone la suya).
   if (parseInt(id, 10) === req.user.id && (is_active !== undefined || role !== undefined)) {
@@ -231,7 +235,9 @@ const updateUser = async (req, res) => {
               badges    = COALESCE($4::jsonb, badges), /*019*/
               updated_at = NOW()
         WHERE id = $3
-        RETURNING id, name, email, role, is_active`;
+        RETURNING id, name, email, role, is_active
+          , badges /*019*/
+        `;
     const params = [
       typeof is_active === 'boolean' ? is_active : null,
       role || null,

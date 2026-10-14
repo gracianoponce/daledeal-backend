@@ -100,9 +100,15 @@ describe('SQL del código contra la base real', () => {
     const estaticas = statements.filter(s => !s.dynamic);
     // Si el buscador dejara de encontrar consultas, el test pasaría sin probar nada.
     expect(estaticas.length).toBeGreaterThan(100);
+    // Las que usan columnas de la migración 019 también tienen que preparar
+    // en su variante sin esas líneas (lo que corre query019 si falta la migración).
+    const { withoutMigration019 } = require('../src/services/badges');
+    const sinMigracion = estaticas.filter(s => /\/\*019\*\//.test(s.text))
+      .map(s => ({ where: `${s.where} (sin la 019)`, text: withoutMigration019(s.text) }));
+    expect(sinMigracion.length).toBeGreaterThan(3);
 
     const errores = [];
-    for (const s of estaticas) {
+    for (const s of [...estaticas, ...sinMigracion]) {
       try {
         await client.query(`PREPARE sql_test AS ${s.text}`);
         await client.query('DEALLOCATE sql_test');

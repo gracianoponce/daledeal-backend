@@ -25,6 +25,14 @@ const MAX_BADGE_TEXT  = 20;
 const DEFAULT_COLOR   = '#ef4444';
 const HEX_COLOR       = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i;
 const MARK_019        = /\/\*019\*\//;
+// Caracteres de control, de ancho cero y bidi (sirven para disfrazar una
+// palabra reservada) y sustitutos UTF-16 sueltos (Postgres rechaza el jsonb).
+const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+// Un cartel no puede hacerse pasar por una insignia de la plataforma: eso es
+// lo que el sitio vende como confianza. Se compara sin acentos ni mayúsculas.
+const RESERVED = ['verificado', 'verificada', 'titulo verificado', 'ceo', 'fundador', 'dale deal', 'daledeal',
+  'compra protegida', 'admin', 'administrador', 'mercado pago', 'mercadopago'];
+const plain = (t) => t.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 function normalizeUserBadges(raw) {
   if (!Array.isArray(raw)) return { ok: false, error: 'badges debe ser un array de insignias' };
@@ -47,10 +55,15 @@ function normalizePostBadges(raw) {
     if (!b || typeof b !== 'object' || typeof b.text !== 'string') {
       return { ok: false, error: 'Cada cartel necesita un texto' };
     }
-    const text = b.text.trim();
+    const text = b.text.replace(INVISIBLE, '').trim();
     if (!text) continue; // cartel vacío: no se guarda
     if (text.length > MAX_BADGE_TEXT) {
       return { ok: false, error: `El texto de un cartel no puede superar los ${MAX_BADGE_TEXT} caracteres` };
+    }
+    const spaced = ` ${plain(text)} `, compact = spaced.replace(/ /g, '');
+    const reserved = RESERVED.find((r) => spaced.includes(` ${r} `) || compact.includes(r.replace(/ /g, '')));
+    if (reserved) {
+      return { ok: false, error: `El cartel "${text}" no se puede usar: las insignias de la plataforma (verificado, fundador, Compra Protegida…) las asigna Dale Deal.` };
     }
     const color = typeof b.color === 'string' && HEX_COLOR.test(b.color) ? b.color.toLowerCase() : DEFAULT_COLOR;
     badges.push({ text: sanitize(text), color });
@@ -78,6 +91,6 @@ async function query019(sql, params, dropParams = 0) {
 }
 
 module.exports = {
-  USER_BADGES, MAX_POST_BADGES, MAX_BADGE_TEXT,
+  USER_BADGES, MAX_POST_BADGES, MAX_BADGE_TEXT, RESERVED,
   normalizeUserBadges, normalizePostBadges, postBadgesParam, query019, withoutMigration019,
 };

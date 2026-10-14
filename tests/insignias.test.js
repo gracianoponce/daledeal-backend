@@ -67,6 +67,17 @@ describe('normalizadores', () => {
     expect(normalizeUserBadges(['ceo', 42]).ok).toBe(false);
     expect(normalizeUserBadges('ceo').ok).toBe(false);
   });
+  test('carteles: no se puede imitar una insignia de la plataforma', () => {
+    for (const t of ['VERIFICADO', 'Vendedor verificado', 'C.E.O', 'Compra Protegida', 'DALE DEAL OFICIAL', 'v\u200berificado', 'Fundadór']) {
+      expect(normalizePostBadges([{ text: t }]).ok).toBe(false);
+    }
+    expect(normalizePostBadges([{ text: 'GARANTÍA 1 AÑO' }]).ok).toBe(true);
+    expect(normalizePostBadges([{ text: 'DISTRIBUIDOR OFICIAL' }]).ok).toBe(true);
+  });
+  test('carteles: saca caracteres invisibles y de control en vez de fallar', () => {
+    expect(normalizePostBadges([{ text: 'OFER\u0000TA\u200b' }])).toEqual({ ok: true, badges: [{ text: 'OFERTA', color: '#ef4444' }] });
+    expect(normalizePostBadges([{ text: '\u202e\u0000\ud800' }])).toEqual({ ok: true, badges: [] });
+  });
   test('withoutMigration019 saca solo las líneas marcadas', () => {
     expect(withoutMigration019('SELECT a,\n  b, /*019*/\n  c FROM t')).toBe('SELECT a,\n  c FROM t');
   });
@@ -98,6 +109,13 @@ describe('carteles en productos', () => {
     r = await request(app).post('/products').set(auth(USER))
       .send({ title: 'Taladro', price: 1000, badges: [{ text: 'x'.repeat(21) }] });
     expect(r.status).toBe(400);
+    expect(find(/INSERT INTO products/)).toBeUndefined();
+  });
+
+  test('POST /products con un cartel que imita una insignia → 400', async () => {
+    const r = await request(app).post('/products').set(auth(USER)).send({ title: 'Taladro', price: 1000, badges: [{ text: 'VERIFICADO' }] });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/no se puede usar/);
     expect(find(/INSERT INTO products/)).toBeUndefined();
   });
 
@@ -245,6 +263,20 @@ describe('insignias de usuario (admin)', () => {
     expect(r.status).toBe(200);
     expect(r.body.data[0].badges).toEqual(['ceo']);
     expect(find(/^\s*SELECT id, name, email, phone/)[0]).toMatch(/verified_identity, verified_professional,\s+badges, \/\*019\*\//);
+  });
+
+  test('el id tiene que ser un entero decimal (0x1 no esquiva la guardia de la propia cuenta)', async () => {
+    const r = await request(app).patch('/admin/users/0x1').set(auth(ADMIN)).send({ is_active: false });
+    expect(r.status).toBe(400);
+    expect(find(/UPDATE users/)).toBeUndefined();
+  });
+
+  test('la respuesta del PATCH devuelve las insignias (RETURNING con la 019)', async () => {
+    db.query.mockImplementation(async (sql, params) => /UPDATE users/.test(sql) ? { rows: [{ id: 5, badges: ['ceo'] }] } : baseQuery(sql, params));
+    const r = await request(app).patch('/admin/users/5').set(auth(ADMIN)).send({ badges: ['ceo'] });
+    expect(r.status).toBe(200);
+    expect(r.body.user.badges).toEqual(['ceo']);
+    expect(find(/UPDATE users/)[0]).toMatch(/RETURNING id, name, email, role, is_active\s+, badges \/\*019\*\//);
   });
 
   test('un usuario común no asigna insignias', async () => {
