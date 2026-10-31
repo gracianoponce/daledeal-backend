@@ -32,7 +32,13 @@ INSERT INTO product_categories (name, slug, icon) VALUES
   ('Juguetes',           'juguetes',         'star'),
   ('Vehículos',          'vehiculos',        'car'),
   ('Inmuebles',          'inmuebles',        'building'),
-  ('Otros',              'otros',            'package');
+  ('Otros',              'otros',            'package'),
+  -- 020: rubros de los fundadores (ids 9-13)
+  ('Herramientas y ferretería', 'herramientas-ferreteria', 'wrench'),
+  ('Electrodomésticos',  'electrodomesticos', 'plug'),
+  ('Decoración y artesanías', 'decoracion-artesanias', 'palette'),
+  ('Alimentos y bebidas', 'alimentos-bebidas', 'coffee'),
+  ('Mascotas',           'mascotas',         'heart');
 
 -- ============================================================
 -- CATEGORÍAS DE SERVICIOS
@@ -41,13 +47,17 @@ INSERT INTO service_categories (name, slug, icon) VALUES
   ('Plomería',           'plomeria',         'droplet'),
   ('Electricidad',       'electricidad',     'zap'),
   ('Gasista',            'gasista',          'flame'),
-  ('Peluquería',         'peluqueria',       'scissors'),
+  ('Belleza y estética', 'belleza-estetica', 'scissors'),   -- 020: antes "Peluquería"
   ('Limpieza',           'limpieza',         'wind'),
   ('Pintura',            'pintura',          'paintbrush'),
   ('Carpintería',        'carpinteria',      'hammer'),
   ('Mecánica',           'mecanica',         'settings'),
   ('Informática',        'informatica',      'monitor'),
-  ('Otros servicios',    'otros-servicios',  'briefcase');
+  ('Otros servicios',    'otros-servicios',  'briefcase'),
+  -- 020: rubros de los fundadores (ids 11-13)
+  ('Eventos',            'eventos',          'party-popper'),
+  ('Service técnico',    'service-tecnico',  'wrench'),
+  ('Marketing y diseño', 'marketing-diseno', 'megaphone');
 
 -- ============================================================
 -- USUARIOS DE PRUEBA
