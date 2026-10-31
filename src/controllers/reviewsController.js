@@ -94,6 +94,22 @@ const createReview = async (req, res) => {
       }
     }
 
+    // Para servicios: no hay órdenes, así que verificamos que el usuario
+    // haya contactado al proveedor por este servicio (conversación iniciada).
+    if (item_type === 'service') {
+      const convCheck = await db.query(
+        `SELECT id FROM conversations
+         WHERE buyer_id = $1 AND service_id = $2 AND item_type = 'service'
+         LIMIT 1`,
+        [req.user.id, item_id]
+      );
+      if (convCheck.rows.length === 0) {
+        return res.status(403).json({
+          error: 'Solo podés reseñar servicios cuyo proveedor hayas contactado'
+        });
+      }
+    }
+
     // Verificar que no haya reseñado ya este item
     const dupCheck = await db.query(
       'SELECT id FROM reviews WHERE reviewer_id = $1 AND item_type = $2 AND item_id = $3',

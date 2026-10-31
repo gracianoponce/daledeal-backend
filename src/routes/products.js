@@ -6,6 +6,7 @@ const {
 } = require('../controllers/productController');
 const authMiddleware = require('../middleware/auth');
 const cacheControl   = require('../middleware/cacheControl');
+const { createLimiter } = require('../middleware/rateLimiter');
 
 // Cache para GET de catálogo: 60s fresh + 5min stale-while-revalidate.
 // Mitiga la latencia del backend en US para usuarios argentinos.
@@ -22,8 +23,8 @@ router.get('/', catalogCache, getProducts);
 // GET /products/:id
 router.get('/:id', catalogCache, getProductById);
 
-// POST /products  (requiere login)
-router.post('/', authMiddleware, createProduct);
+// POST /products  (requiere login, máx. 30 publicaciones/hora)
+router.post('/', authMiddleware, createLimiter, createProduct);
 
 // PUT /products/:id  (requiere login)
 router.put('/:id', authMiddleware, updateProduct);

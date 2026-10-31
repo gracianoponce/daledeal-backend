@@ -6,6 +6,7 @@ const {
 } = require('../controllers/serviceController');
 const authMiddleware = require('../middleware/auth');
 const cacheControl   = require('../middleware/cacheControl');
+const { createLimiter } = require('../middleware/rateLimiter');
 
 const catalogCache  = cacheControl(60, 300);
 const categoryCache = cacheControl(600, 3600);
@@ -19,8 +20,8 @@ router.get('/', catalogCache, getServices);
 // GET /services/:id
 router.get('/:id', catalogCache, getServiceById);
 
-// POST /services  (requiere login)
-router.post('/', authMiddleware, createService);
+// POST /services  (requiere login, máx. 30 publicaciones/hora)
+router.post('/', authMiddleware, createLimiter, createService);
 
 // PUT /services/:id  (requiere login)
 router.put('/:id', authMiddleware, updateService);
