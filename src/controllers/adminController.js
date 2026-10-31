@@ -187,7 +187,7 @@ const listUsers = async (req, res) => {
     );
 
     res.json({
-      data:       result.rows,
+      data:       result.rows.map(withShippingInfo),
       total:      countRes.rows[0].total,
       page:       parseInt(page, 10) || 1,
       limit:      lim,
@@ -346,6 +346,17 @@ const updateProductStatus = async (req, res) => {
 // ============================================================
 // GET /admin/orders — Listar todas las órdenes
 // ============================================================
+// Envío legible para el admin (Órdenes): nombre del correo, link de seguimiento
+// y último estado informado. El vendedor carga el número en Mis ventas; acá el
+// equipo lo ve sin tener que pedírselo (pregunta de Dylan, 30/10/2026).
+const trackingSvc = require('../services/tracking');
+const withShippingInfo = (row) => (row ? {
+  ...row,
+  shipping_carrier_name: trackingSvc.getCarrier(row.shipping_carrier)?.name || null,
+  tracking_url:          trackingSvc.buildTrackingUrl(row.shipping_carrier, row.tracking_number),
+  tracking_status_label: trackingSvc.statusLabel(row.tracking_status),
+} : row);
+
 const listOrders = async (req, res) => {
   const { status, payment_status, page = 1, limit = 20 } = req.query;
   const lim    = Math.min(parseInt(limit, 10) || 20, 100);
@@ -363,6 +374,7 @@ const listOrders = async (req, res) => {
     const result = await db.query(
       `SELECT o.id, o.status, o.payment_status, o.total_price, o.currency,
               o.commission_amount, o.shipping_method, o.created_at, o.paid_at,
+              o.tracking_number, o.shipping_carrier, o.tracking_status, o.delivered_at,
               p.title  AS product_title,
               ub.name  AS buyer_name,  ub.email AS buyer_email,
               us.name  AS seller_name, us.email AS seller_email

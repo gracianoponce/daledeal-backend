@@ -11,6 +11,14 @@
 const db = require('../config/database');
 const { sendEmail, payoutReleasedSellerTemplate } = require('../services/email');
 const { describePayoutAccount } = require('../services/payoutAccount');
+const trackingSvc = require('../services/tracking');
+// Seguimiento legible en Retenciones: el admin ve correo + número + link antes de liberar.
+const withShippingInfo = (row) => (row ? {
+  ...row,
+  shipping_carrier_name: trackingSvc.getCarrier(row.shipping_carrier)?.name || null,
+  tracking_url:          trackingSvc.buildTrackingUrl(row.shipping_carrier, row.tracking_number),
+  tracking_status_label: trackingSvc.statusLabel(row.tracking_status),
+} : row);
 
 const RELEASE_DAYS = 7;
 const migPending = (err) => err.code === '42P01' || err.code === '42703';
@@ -43,6 +51,7 @@ async function listReleasable(req, res) {
       `SELECT o.id, o.total_price, o.commission_amount, o.currency, o.status,
               o.paid_at, o.delivered_at, o.buyer_confirmed_at, o.release_status,
               o.delivered_source, o.shipping_method,
+              o.tracking_number, o.shipping_carrier, o.tracking_status,
               (o.total_price - COALESCE(o.commission_amount, 0)) AS net_amount,
               ${RELEASABLE_SQL} AS releasable,
               p.title AS product_title,
@@ -57,7 +66,7 @@ async function listReleasable(req, res) {
           AND o.release_status IN ('retained', 'held')
         ORDER BY releasable DESC, o.paid_at ASC NULLS LAST`
     );
-    return res.json({ total: r.rows.length, orders: r.rows });
+    return res.json({ total: r.rows.length, orders: r.rows.map(withShippingInfo) });
   } catch (err) {
     if (migPending(err)) return res.json({ total: 0, orders: [] });
     console.error('[payouts] list:', err.message);
