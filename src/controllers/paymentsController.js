@@ -17,6 +17,7 @@ const crypto = require('crypto');
 const db = require('../config/database');
 const mp = require('../config/mercadopago');
 const { decodeHtmlEntities } = require('../middleware/validate');
+const { ensureOrderConversation } = require('./messageController');
 const {
   sendEmail,
   orderPaidBuyerTemplate,
@@ -512,10 +513,14 @@ async function applyPaymentUpdate(mpPayment, { topic, action, requestId = null, 
 
   // Mails FUERA de la transacción y sin await: si falla un mail no afecta a la
   // orden. Si falla el envío, queda registrado en logs.
+  // Antes se abre el chat comprador ↔ vendedor (con el checkout de MP no se
+  // creaba ninguno y no tenían cómo hablar) para que los mails lleven el link;
+  // si el chat falla, los mails salen igual, con el link a Mensajes.
   if (decision.becamePaid) {
-    sendOrderPaidEmails(orderId).catch(err =>
-      console.error('[mp] sendOrderPaidEmails error:', err.message)
-    );
+    ensureOrderConversation(orderId)
+      .catch(err => { console.error('[mp] ensureOrderConversation error:', err.message); return null; })
+      .then(conv => sendOrderPaidEmails(orderId, conv?.id))
+      .catch(err => console.error('[mp] sendOrderPaidEmails error:', err.message));
   }
   // Pago rechazado o cancelado por MP (rapipago vencido, fondos insuficientes,
   // 3DS rechazado, etc.): avisamos al comprador que puede reintentar.
@@ -640,7 +645,7 @@ async function processWebhook(req) {
 // y dispara emails de "compra confirmada" (al comprador) y
 // "tenés una venta nueva" (al vendedor).
 // ============================================================
-async function sendOrderPaidEmails(orderId) {
+async function sendOrderPaidEmails(orderId, conversationId = null) {
   // Con los datos de cobro del vendedor (017) para recordarle cargarlos;
   // si la migration no está, la misma query sin esa columna.
   const sql = withPayout => `SELECT o.id, o.total_price, o.shipping_method, o.shipping_city,
@@ -672,6 +677,7 @@ async function sendOrderPaidEmails(orderId) {
       total:        o.total_price,
       sellerName:   o.seller_name,
       isPickup,
+      conversationId,
     });
     sendEmail({ to: o.buyer_email, subject: tpl.subject, html: tpl.html, text: tpl.text })
       .catch(e => console.error('[email] buyer notify failed:', e.message));
@@ -688,6 +694,7 @@ async function sendOrderPaidEmails(orderId) {
       isPickup,
       shippingCity: o.shipping_city,
       needsPayoutAccount: 'seller_payout_account' in o && !o.seller_payout_account,
+      conversationId,
     });
     sendEmail({ to: o.seller_email, subject: tpl.subject, html: tpl.html, text: tpl.text })
       .catch(e => console.error('[email] seller notify failed:', e.message));

@@ -1,4 +1,5 @@
 const db = require('../config/database');
+const { sendEmail, newMessageTemplate } = require('../services/email');
 
 // ============================================================
 // Helpers
@@ -96,15 +97,100 @@ async function findOrCreateConversation({
     return { conversation: convo, created: false };
   }
 
+  // ON CONFLICT DO NOTHING: el webhook de Mercado Pago y el botón "Escribirle
+  // al vendedor" pueden crear el mismo chat a la vez; el que pierde la carrera
+  // toma el que ya quedó (sin romper la transacción en la que esté).
   const insert = await client.query(
     `INSERT INTO conversations
        (buyer_id, seller_id, product_id, service_id, order_id, item_type)
      VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT DO NOTHING
      RETURNING *`,
     [buyer_id, seller_id, product_id, service_id, order_id, item_type]
   );
+  if (insert.rows.length === 0) {
+    const again = await client.query(existingQuery, [buyer_id, seller_id, existingParam]);
+    return { conversation: again.rows[0], created: false };
+  }
 
   return { conversation: insert.rows[0], created: true };
+}
+
+/**
+ * Abre (o recupera) el chat comprador ↔ vendedor de una orden de producto.
+ * Lo llama el webhook de Mercado Pago cuando se acredita el pago: con el
+ * checkout de MP no se creaba ningún chat y comprador y vendedor no tenían
+ * cómo hablar. Devuelve null si la orden no tiene producto (publicación borrada).
+ */
+async function ensureOrderConversation(orderId) {
+  const r = await db.query(
+    'SELECT id, buyer_id, seller_id, product_id FROM orders WHERE id = $1',
+    [orderId]
+  );
+  const o = r.rows[0];
+  if (!o || !o.product_id || o.buyer_id === o.seller_id) return null;
+  const { conversation } = await findOrCreateConversation({
+    buyer_id:   o.buyer_id,
+    seller_id:  o.seller_id,
+    item_type:  'product',
+    product_id: o.product_id,
+    order_id:   o.id,
+  });
+  return conversation;
+}
+
+/**
+ * Aviso por mail de un mensaje nuevo. Sin esto, un vendedor que no entra al
+ * sitio nunca se enteraba de que el comprador le escribió.
+ * Uno por "tanda": si el destinatario todavía tiene sin leer otro mensaje de
+ * esta misma persona en este chat, ya le avisamos y no le mandamos otro.
+ * Tampoco si el destinatario estuvo activo en este chat en los últimos 5
+ * minutos (escribió o leyó): están conversando en vivo y la página de
+ * Mensajes marca como leído cada pocos segundos, así que sin esto cada
+ * mensaje de una charla en vivo mandaba un mail.
+ */
+async function notifyNewMessage({ conversationId, senderId, messageId, body }) {
+  const state = await db.query(
+    `SELECT
+       EXISTS (SELECT 1 FROM messages
+                WHERE conversation_id = $1 AND sender_id = $2
+                  AND read_at IS NULL AND id <> $3) AS pending,
+       EXISTS (SELECT 1 FROM messages
+                WHERE conversation_id = $1
+                  AND ((sender_id <> $2 AND created_at > NOW() - INTERVAL '5 minutes')
+                    OR (sender_id = $2 AND read_at > NOW() - INTERVAL '5 minutes'))) AS active`,
+    [conversationId, senderId, messageId]
+  );
+  const s = state.rows[0] || {};
+  if (s.pending || s.active) return false;
+
+  const r = await db.query(
+    `SELECT c.id, c.order_id, (c.buyer_id = $2) AS from_buyer,
+            ur.email AS recipient_email, ur.name AS recipient_name,
+            us.name  AS sender_name,
+            COALESCE(p.title, s.title) AS item_title
+       FROM conversations c
+       JOIN users ur ON ur.id = (CASE WHEN c.buyer_id = $2 THEN c.seller_id ELSE c.buyer_id END)
+       JOIN users us ON us.id = $2
+       LEFT JOIN products p ON p.id = c.product_id
+       LEFT JOIN services s ON s.id = c.service_id
+      WHERE c.id = $1`,
+    [conversationId, senderId]
+  );
+  const c = r.rows[0];
+  if (!c || !c.recipient_email) return false;
+
+  const tpl = newMessageTemplate({
+    recipientName:  c.recipient_name,
+    senderName:     c.sender_name,
+    itemTitle:      c.item_title,
+    preview:        body,
+    conversationId: c.id,
+    fromBuyer:      c.from_buyer,
+    orderId:        c.order_id,
+  });
+  await sendEmail({ to: c.recipient_email, subject: tpl.subject, html: tpl.html, text: tpl.text });
+  return true;
 }
 
 // ============================================================
@@ -287,6 +373,14 @@ const sendMessage = async (req, res) => {
       [id, req.user.id, body.trim()]
     );
 
+    // Sin await: si el mail falla, el mensaje igual quedó guardado.
+    notifyNewMessage({
+      conversationId: Number(id),
+      senderId:       req.user.id,
+      messageId:      result.rows[0].id,
+      body:           body.trim(),
+    }).catch(e => console.error('[email] aviso de mensaje nuevo falló:', e.message));
+
     res.status(201).json({ message: result.rows[0] });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
@@ -352,6 +446,8 @@ module.exports = {
   sendMessage,
   markAsRead,
   getUnreadCount,
-  // Helper interno expuesto para ordersController
+  // Helpers internos expuestos para ordersController / paymentsController
   findOrCreateConversation,
+  ensureOrderConversation,
+  notifyNewMessage,
 };

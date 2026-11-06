@@ -8,6 +8,7 @@ const {
   updateOrderStatus,
   updateShippingTracking,
   confirmDelivery,
+  openOrderConversation,
 } = require('../controllers/ordersController');
 const { getOrderTracking }      = require('../controllers/trackingController');
 const authMiddleware            = require('../middleware/auth');
@@ -39,5 +40,8 @@ router.patch('/:id/shipping', updateShippingTracking);
 
 // POST   /orders/:id/confirm-delivery — Comprador: confirmar recepción (escrow)
 router.post('/:id/confirm-delivery', confirmDelivery);
+
+// POST   /orders/:id/conversation — Comprador o vendedor: abrir el chat de la orden
+router.post('/:id/conversation', openOrderConversation);
 
 module.exports = router;

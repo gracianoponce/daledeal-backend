@@ -199,7 +199,7 @@ function passwordResetTemplate({ name, resetUrl }) {
   };
 }
 
-function orderPaidBuyerTemplate({ buyerName, orderId, productTitle, total, sellerName, isPickup, trackingHint }) {
+function orderPaidBuyerTemplate({ buyerName, orderId, productTitle, total, sellerName, isPickup, trackingHint, conversationId }) {
   const totalFmt = formatARS(total);
   const inner = `
     <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">¡Compra confirmada! 🎉</h2>
@@ -213,8 +213,9 @@ function orderPaidBuyerTemplate({ buyerName, orderId, productTitle, total, selle
     </table>
 
     <p>${isPickup
-      ? 'Coordiná día y horario con el vendedor por chat dentro de Dale Deal.'
+      ? 'Coordiná día y horario con el vendedor por el chat de Dale Deal.'
       : 'Cuando el vendedor despache tu pedido te vamos a avisar con el número de seguimiento.'}</p>
+    <p>Ya tenés un chat abierto con ${escapeHtml(sellerName || 'el vendedor')}: <a href="${escapeHtml(chatUrl(conversationId))}" style="color:#d63031;font-weight:600;">escribile acá</a>, o desde Mis compras con el botón «Escribirle al vendedor».</p>
     ${trackingHint ? `<p style="font-size:13px;color:#6b7280;">${escapeHtml(trackingHint)}</p>` : ''}
 
     <p style="text-align:center;margin:28px 0;">${btn('Ver mis compras', 'https://daledeal.com.ar/HTML/notificaciones.html#mis-compras')}</p>
@@ -222,11 +223,18 @@ function orderPaidBuyerTemplate({ buyerName, orderId, productTitle, total, selle
   return {
     subject: `Compra confirmada · Orden #${orderId}`,
     html:    emailWrap(inner, { title: 'Compra confirmada' }),
-    text:    `Compra confirmada en Dale Deal\nOrden #${orderId}\nProducto: ${decodeHtmlEntities(productTitle)}\nTotal: ${totalFmt}\n\nEntrá a Mis compras: https://daledeal.com.ar/HTML/notificaciones.html#mis-compras`,
+    text:    `Compra confirmada en Dale Deal\nOrden #${orderId}\nProducto: ${decodeHtmlEntities(productTitle)}\nTotal: ${totalFmt}\n\nEscribile al vendedor: ${chatUrl(conversationId)}\nEntrá a Mis compras: https://daledeal.com.ar/HTML/notificaciones.html#mis-compras`,
   };
 }
 
-function newSaleSellerTemplate({ sellerName, orderId, productTitle, buyerName, total, isPickup, shippingCity, needsPayoutAccount }) {
+// Link al chat (perfil → Mensajes). Sin id, abre la lista de conversaciones.
+function chatUrl(conversationId) {
+  return conversationId
+    ? `https://daledeal.com.ar/notificaciones?conv=${encodeURIComponent(conversationId)}#mensajes`
+    : 'https://daledeal.com.ar/notificaciones#mensajes';
+}
+
+function newSaleSellerTemplate({ sellerName, orderId, productTitle, buyerName, total, isPickup, shippingCity, needsPayoutAccount, conversationId }) {
   const totalFmt = formatARS(total);
   const inner = `
     <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">¡Tenés una venta nueva! 🎊</h2>
@@ -242,8 +250,9 @@ function newSaleSellerTemplate({ sellerName, orderId, productTitle, buyerName, t
     <p><strong>¿Qué hacer ahora?</strong></p>
     <ul style="padding-left:20px;line-height:1.7;">
       ${isPickup
-        ? '<li>Coordiná con el comprador por chat para acordar fecha y hora.</li>'
+        ? '<li>Coordiná con el comprador por el chat para acordar fecha y hora.</li>'
         : '<li>Preparalo y despachalo en las próximas 48 hs.</li><li>Cuando tengas el número de tracking, cargalo en "Mis ventas" para notificar al comprador.</li>'}
+      <li>Ya tenés un chat abierto con ${escapeHtml(buyerName || 'el comprador')}: <a href="${escapeHtml(chatUrl(conversationId))}" style="color:#d63031;font-weight:600;">escribile acá</a>, o desde Mis ventas con el botón «Escribirle al comprador».</li>
       <li>Tu pago queda protegido: lo liberamos cuando el comprador confirme que lo recibió, o a los 7 días de la entrega si no hay reclamos. Te avisamos por mail.</li>
     </ul>
 
@@ -254,7 +263,7 @@ function newSaleSellerTemplate({ sellerName, orderId, productTitle, buyerName, t
     // El título se guarda escapado; en un asunto no hay HTML que lo interprete.
     subject: `🎉 Vendiste "${decodeHtmlEntities(productTitle) || 'un producto'}" — Orden #${orderId}`,
     html:    emailWrap(inner, { title: 'Venta nueva' }),
-    text:    `Venta nueva en Dale Deal\nOrden #${orderId}\nProducto: ${decodeHtmlEntities(productTitle)}\nTotal: ${totalFmt}\nComprador: ${decodeHtmlEntities(buyerName)}\n\nGestionala en: https://daledeal.com.ar/HTML/mis-ventas.html${needsPayoutAccount ? '\nCargá tus datos de cobro: https://daledeal.com.ar/mi-cuenta#datos-cobro' : ''}`,
+    text:    `Venta nueva en Dale Deal\nOrden #${orderId}\nProducto: ${decodeHtmlEntities(productTitle)}\nTotal: ${totalFmt}\nComprador: ${decodeHtmlEntities(buyerName)}\n\nEscribile al comprador: ${chatUrl(conversationId)}\nGestionala en: https://daledeal.com.ar/HTML/mis-ventas.html${needsPayoutAccount ? '\nCargá tus datos de cobro: https://daledeal.com.ar/mi-cuenta#datos-cobro' : ''}`,
   };
 }
 
@@ -481,9 +490,34 @@ function verificationRejectedTemplate({ name, type, reason }) {
   };
 }
 
+// Mensaje nuevo en un chat. Va un solo mail por tanda de mensajes sin leer
+// (lo decide notifyNewMessage), así que el texto habla de "un mensaje".
+function newMessageTemplate({ recipientName, senderName, itemTitle, preview, conversationId, fromBuyer, orderId }) {
+  const who   = decodeHtmlEntities(senderName) || (fromBuyer ? 'El comprador' : 'El vendedor');
+  const item  = decodeHtmlEntities(itemTitle);
+  const full  = decodeHtmlEntities(preview || '');
+  const short = full.length > 300 ? full.slice(0, 300).trimEnd() + '…' : full;
+  const role  = fromBuyer ? 'comprador' : 'vendedor';
+  const url   = chatUrl(conversationId);
+  const inner = `
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#1f2937;">Tenés un mensaje nuevo 💬</h2>
+    <p>Hola${recipientName ? ' ' + escapeHtml(recipientName) : ''},</p>
+    <p><strong>${escapeHtml(who)}</strong>${orderId ? ` (${role} de la orden #${orderId})` : ''} te escribió${item ? ` sobre <strong>${escapeHtml(item)}</strong>` : ''}:</p>
+    ${short ? `<blockquote style="margin:16px 0;padding:12px 16px;background:#f9fafb;border-left:4px solid #ff8000;border-radius:4px;color:#374151;white-space:pre-line;">${escapeHtml(short)}</blockquote>` : ''}
+    <p style="text-align:center;margin:28px 0;">${btn('Responder', url)}</p>
+    <p style="font-size:13px;color:#6b7280;">Respondé siempre por el chat de Dale Deal: así queda registro de lo que acordaron y la compra sigue protegida.</p>
+  `;
+  return {
+    subject: `💬 ${who} te escribió en Dale Deal`,
+    html:    emailWrap(inner, { title: 'Mensaje nuevo' }),
+    text:    `${who} te escribió en Dale Deal${item ? ` sobre "${item}"` : ''}:\n\n${short}\n\nRespondé acá: ${url}`,
+  };
+}
+
 module.exports = {
   sendEmail,
   // Templates listos para usar
+  newMessageTemplate,
   passwordResetTemplate,
   orderPaidBuyerTemplate,
   newSaleSellerTemplate,

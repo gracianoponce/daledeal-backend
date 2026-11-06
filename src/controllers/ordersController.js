@@ -817,8 +817,57 @@ const confirmDelivery = async (req, res) => {
   }
 };
 
+// ============================================================
+// POST /orders/:id/conversation
+// Abre (o recupera) el chat comprador ↔ vendedor de una orden. Lo usan los
+// botones "Escribirle al vendedor" (Mis compras) y "Escribirle al comprador"
+// (Mis ventas): con el pago por Mercado Pago no había ningún chat y no tenían
+// cómo hablar. Solo para órdenes pagas (o que lo estuvieron): antes del pago
+// sería un chat previo a la compra, que para productos todavía no existe.
+// ============================================================
+const ORDER_CHAT_STATUSES = ['confirmed', 'shipped', 'delivered'];
+const ORDER_CHAT_PAYMENTS = ['paid', 'refunded'];
+
+const openOrderConversation = async (req, res) => {
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(400).json({ error: 'ID inválido' });
+  const id = parseInt(req.params.id, 10);
+
+  try {
+    const r = await db.query(
+      'SELECT id, buyer_id, seller_id, product_id, status, payment_status FROM orders WHERE id = $1',
+      [id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Orden no encontrada' });
+    const o = r.rows[0];
+    if (o.buyer_id !== req.user.id && o.seller_id !== req.user.id) {
+      return res.status(403).json({ error: 'No tenés permiso para ver esta orden' });
+    }
+    const paid = ORDER_CHAT_PAYMENTS.includes(o.payment_status) || ORDER_CHAT_STATUSES.includes(o.status);
+    if (!paid) {
+      return res.status(409).json({ error: 'El chat se habilita cuando se acredita el pago.' });
+    }
+    if (!o.product_id) {
+      return res.status(409).json({ error: 'La publicación de esta compra ya no existe. Escribinos desde Contacto y te ayudamos.' });
+    }
+
+    const { conversation, created } = await findOrCreateConversation({
+      buyer_id:   o.buyer_id,
+      seller_id:  o.seller_id,
+      item_type:  'product',
+      product_id: o.product_id,
+      order_id:   o.id,
+    });
+    res.status(created ? 201 : 200).json({ conversation, created });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('Error en openOrderConversation:', err);
+    res.status(500).json({ error: 'No pudimos abrir el chat' });
+  }
+};
+
 module.exports = {
   createOrder, getMyOrders, getMySales, getOrderById,
   updateOrderStatus, updateShippingTracking, confirmDelivery,
+  openOrderConversation,
   sendShippedNotification,
 };
